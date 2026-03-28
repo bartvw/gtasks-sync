@@ -39,6 +39,7 @@ function makePlugin(options: {
 		settings: {
 			clientId: 'client-id',
 			defaultListName: options.settings?.defaultListName ?? 'My Tasks',
+			changeLog: { enabled: false, path: 'gtasks-sync-log.md' },
 		},
 	} as unknown as GTasksSyncPlugin;
 }

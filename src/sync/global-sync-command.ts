@@ -2,6 +2,7 @@ import { App, getAllTags, Modal, Notice, TFile } from 'obsidian';
 import { getAccessToken, resolveListId, fetchAllTasks, createTask, updateTask } from '../google-tasks/client';
 import { buildTaskPayload, taskMatchesPayload } from '../google-tasks/field-mapper';
 import { readSyncMeta, writeSyncMeta, writeStatusSyncBack } from './frontmatter';
+import { ChangeLogger, buildFieldChanges } from './change-logger';
 import { GoogleTask } from '../types';
 import GTasksSyncPlugin from '../main';
 
@@ -185,6 +186,7 @@ async function runGlobalSyncWithData(
 	const modal = new SyncProgressModal(plugin.app, files.length);
 	modal.open();
 
+	const logger = plugin.settings.changeLog.enabled ? new ChangeLogger() : null;
 	const vaultName = plugin.app.vault.getName();
 	const results: NoteResult[] = [];
 	let processed = 0;
@@ -205,11 +207,38 @@ async function runGlobalSyncWithData(
 				if (!created.id) throw new Error('API did not return a task ID');
 				await writeSyncMeta(file, plugin.app, created.id, listName, created.status);
 				activeTasks.set(created.id, created);
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'to-google',
+					operation: 'created',
+					noteWikilink: file.basename,
+					listName,
+				});
 			} else if (action === 'update') {
+				const remoteTask = activeTasks.get(syncMeta.taskId!)!;
+				const fieldChanges = buildFieldChanges(remoteTask, payload);
 				const updated = await updateTask(accessToken, listId, syncMeta.taskId!, payload);
 				await writeSyncMeta(file, plugin.app, syncMeta.taskId!, listName, updated.status);
+				if (fieldChanges.length > 0) {
+					logger?.record({
+						timestamp: new Date().toISOString(),
+						direction: 'to-google',
+						operation: 'updated',
+						noteWikilink: file.basename,
+						listName,
+						fieldChanges,
+					});
+				}
 			} else if (action === 'mark-done') {
 				await writeStatusSyncBack(file, plugin.app);
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'from-google',
+					operation: 'updated',
+					noteWikilink: file.basename,
+					listName,
+					fieldChanges: [{ field: 'status', oldValue: 'needsAction', newValue: 'completed' }],
+				});
 			}
 			// 'skip' requires no action
 		} catch (err) {
@@ -222,6 +251,7 @@ async function runGlobalSyncWithData(
 	}
 
 	modal.showSummary(processed, results);
+	if (logger) await logger.flush(plugin.app, plugin.settings.changeLog.path);
 }
 
 function discoverTaskNotes(plugin: GTasksSyncPlugin): TFile[] {

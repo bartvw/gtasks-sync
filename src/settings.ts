@@ -7,6 +7,10 @@ import GTasksSyncPlugin from './main';
 export const DEFAULT_SETTINGS: PluginSettings = {
 	clientId: '',
 	defaultListName: '',
+	changeLog: {
+		enabled: true,
+		path: 'gtasks-sync-log.md',
+	},
 };
 
 export class GTasksSettingTab extends PluginSettingTab {
@@ -81,6 +85,34 @@ export class GTasksSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.defaultListName)
 					.onChange(async value => {
 						this.plugin.settings.defaultListName = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// --- Change Log ---
+		containerEl.createEl('h2', { text: 'Change Log' });
+
+		new Setting(containerEl)
+			.setName('Enable change log')
+			.setDesc('Append a log of every sync operation to a file in your vault.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.changeLog.enabled)
+					.onChange(async value => {
+						this.plugin.settings.changeLog.enabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Log file path')
+			.setDesc('Vault-relative path for the change log file (e.g. gtasks-sync-log.md).')
+			.addText(text =>
+				text
+					.setPlaceholder('gtasks-sync-log.md')
+					.setValue(this.plugin.settings.changeLog.path)
+					.onChange(async value => {
+						this.plugin.settings.changeLog.path = value;
 						await this.plugin.saveSettings();
 					})
 			);

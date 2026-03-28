@@ -2,6 +2,7 @@ import { getAllTags, Notice } from 'obsidian';
 import { getAccessToken, resolveListId, createTask, updateTask, deleteTask, getTask } from '../google-tasks/client';
 import { buildTaskPayload } from '../google-tasks/field-mapper';
 import { readSyncMeta, writeSyncMeta, writeStatusSyncBack } from './frontmatter';
+import { ChangeLogger, buildFieldChanges } from './change-logger';
 import GTasksSyncPlugin from '../main';
 
 export async function runSyncCommand(plugin: GTasksSyncPlugin): Promise<void> {
@@ -48,12 +49,21 @@ export async function runSyncCommand(plugin: GTasksSyncPlugin): Promise<void> {
 	const vaultName = plugin.app.vault.getName();
 	const payload = buildTaskPayload(frontmatter, file, vaultName);
 
+	const logger = plugin.settings.changeLog.enabled ? new ChangeLogger() : null;
+
 	try {
 		if (!syncMeta.taskId) {
 			// 6. First push: create task
 			const created = await createTask(accessToken, listId, payload);
 			if (!created.id) throw new Error('API did not return a task ID');
 			await writeSyncMeta(file, plugin.app, created.id, listName, created.status);
+			logger?.record({
+				timestamp: new Date().toISOString(),
+				direction: 'to-google',
+				operation: 'created',
+				noteWikilink: file.basename,
+				listName,
+			});
 			new Notice('Task created in Google Tasks.');
 		} else if (syncMeta.listName && syncMeta.listName !== listName) {
 			// 7. List changed: move task (create in new → delete from old → update frontmatter)
@@ -70,6 +80,13 @@ export async function runSyncCommand(plugin: GTasksSyncPlugin): Promise<void> {
 				return;
 			}
 
+			logger?.record({
+				timestamp: new Date().toISOString(),
+				direction: 'to-google',
+				operation: 'created',
+				noteWikilink: file.basename,
+				listName,
+			});
 			new Notice('Task moved to new list in Google Tasks.');
 		} else {
 			// 8. Update existing task: fetch current state first
@@ -85,17 +102,39 @@ export async function runSyncCommand(plugin: GTasksSyncPlugin): Promise<void> {
 			// 8a. Task was completed in Google Tasks since last sync — sync back
 			if (currentTask.status === 'completed' && syncMeta.gtaskStatus === 'needsAction') {
 				await writeStatusSyncBack(file, plugin.app);
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'from-google',
+					operation: 'updated',
+					noteWikilink: file.basename,
+					listName,
+					fieldChanges: [{ field: 'status', oldValue: 'needsAction', newValue: 'completed' }],
+				});
+				if (logger) await logger.flush(plugin.app, plugin.settings.changeLog.path);
 				new Notice('Task was completed in Google Tasks. Note updated.');
 				return;
 			}
 
 			// 8b. Push local state to Google Tasks
+			const fieldChanges = buildFieldChanges(currentTask, payload);
 			const updated = await updateTask(accessToken, listId, syncMeta.taskId, payload);
 			await writeSyncMeta(file, plugin.app, syncMeta.taskId, listName, updated.status);
+			if (fieldChanges.length > 0) {
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'to-google',
+					operation: 'updated',
+					noteWikilink: file.basename,
+					listName,
+					fieldChanges,
+				});
+			}
 			new Notice('Task updated in Google Tasks.');
 		}
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		new Notice(`Sync failed: ${msg}`);
 	}
+
+	if (logger) await logger.flush(plugin.app, plugin.settings.changeLog.path);
 }

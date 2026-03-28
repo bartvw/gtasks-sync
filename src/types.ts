@@ -1,6 +1,10 @@
 export interface PluginSettings {
 	clientId: string;
 	defaultListName: string;
+	changeLog: {
+		enabled: boolean;
+		path: string;
+	};
 }
 
 export interface GoogleTask {
