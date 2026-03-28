@@ -1,0 +1,9 @@
+{
+	"id": "gtasks-sync",
+	"name": "Google Tasks Sync",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Synchronises task notes with Google Tasks.",
+	"author": "Bart van Wissen",
+	"isDesktopOnly": false
+}
