@@ -1,0 +1,41 @@
+import { TFile } from 'obsidian';
+import { GoogleTask } from '../types';
+
+export function buildObsidianUri(vaultName: string, filePath: string): string {
+	return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(filePath)}`;
+}
+
+export function mapStatusToGoogle(status: string): 'needsAction' | 'completed' {
+	return status === 'done' || status === 'cancelled' ? 'completed' : 'needsAction';
+}
+
+export function mapDueToGoogle(due: string | undefined): string | undefined {
+	if (!due) return undefined;
+	// Convert YYYY-MM-DD to RFC 3339 midnight UTC
+	return `${due}T00:00:00.000Z`;
+}
+
+export function buildTaskPayload(
+	frontmatter: Record<string, unknown>,
+	file: TFile,
+	vaultName: string
+): Omit<GoogleTask, 'id'> {
+	const title = typeof frontmatter['title'] === 'string'
+		? frontmatter['title']
+		: file.basename;
+
+	const status = mapStatusToGoogle(
+		typeof frontmatter['status'] === 'string' ? frontmatter['status'] : ''
+	);
+
+	const due = mapDueToGoogle(
+		typeof frontmatter['due'] === 'string' ? frontmatter['due'] : undefined
+	);
+
+	const notes = buildObsidianUri(vaultName, file.path);
+
+	const payload: Omit<GoogleTask, 'id'> = { title, status, notes };
+	if (due) payload.due = due;
+
+	return payload;
+}

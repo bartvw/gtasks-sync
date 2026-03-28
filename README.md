@@ -1,16 +1,51 @@
-# Obsidian Sample Plugin
+# Google Tasks Sync
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+An Obsidian plugin that syncs [TaskNotes](https://obsidian.md/plugins?id=obsidian-task-notes) task notes to Google Tasks.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Command: Sync current note to Google Tasks** — available on any note with a `status` frontmatter field.
+- First push creates a new Google Task; subsequent pushes update it in place.
+- Changing the default list moves the task to the new list automatically.
+- OAuth 2.0 authentication using your own Google Cloud credentials (desktop only).
+- Tokens stored securely in the OS keychain via Obsidian's `SecretStorage` API.
+
+## Setup
+
+1. Create a Google Cloud project and enable the **Google Tasks API**.
+2. Create an OAuth 2.0 **Desktop app** client ID and note the Client ID and Client Secret.
+3. In Obsidian → Settings → Google Tasks Sync, enter your Client ID and Client Secret.
+4. Click **Connect Google Account** and complete the sign-in flow.
+5. Enter the name of the Google Tasks list you want to sync to.
+
+## Development
+
+```sh
+npm install
+npm run dev       # watch mode
+npm run build     # production build
+npm test          # unit tests
+```
+
+### Integration Tests
+
+Integration tests require live Google credentials and are excluded from the default test run.
+
+**Required environment variables:**
+
+| Variable | Description |
+|---|---|
+| `GTASKS_CLIENT_ID` | OAuth 2.0 Client ID |
+| `GTASKS_CLIENT_SECRET` | OAuth 2.0 Client Secret |
+| `GTASKS_REFRESH_TOKEN` | A valid refresh token |
+| `GTASKS_LIST_NAME` | Target list name (default: `My Tasks`) |
+
+**Run integration tests:**
+
+```sh
+GTASKS_CLIENT_ID=... GTASKS_CLIENT_SECRET=... GTASKS_REFRESH_TOKEN=... \
+  npx vitest run src/integration/ --reporter=verbose
+```
 
 ## First time developing plugins?
 

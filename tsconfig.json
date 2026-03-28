@@ -26,5 +26,11 @@
 	},
 	"include": [
 		"src/**/*.ts"
+	],
+	"exclude": [
+		"src/integration/**/*.ts",
+		"src/**/__mocks__/**/*.ts",
+		"src/**/*.test.ts",
+		"vitest.config.ts"
 	]
 }
