@@ -4,9 +4,12 @@ An Obsidian plugin that syncs [TaskNotes](https://obsidian.md/plugins?id=obsidia
 
 ## Features
 
-- **Command: Sync current note to Google Tasks** — available on any note with a `status` frontmatter field.
-- First push creates a new Google Task; subsequent pushes update it in place.
+- **Command: Sync current note to Google Tasks** — syncs the active note; first push creates a task, subsequent pushes update it in place.
+- **Command: Global Sync** — vault-wide reconciliation; discovers all `#task` notes and syncs them to Google Tasks in one run with a progress modal.
+- **Command: Dry Run** — previews what Global Sync would do (create / update / mark done / skip) without making any changes.
 - Changing the default list moves the task to the new list automatically.
+- Skips API calls when no tracked fields have changed since the last sync.
+- **Change log** — appends a human-readable Markdown log of every sync operation (creates, updates, deletes) to a configurable vault file after each run.
 - OAuth 2.0 authentication using your own Google Cloud credentials (desktop only).
 - Tokens stored securely in the OS keychain via Obsidian's `SecretStorage` API.
 
@@ -22,6 +25,31 @@ An Obsidian plugin that syncs [TaskNotes](https://obsidian.md/plugins?id=obsidia
 3. In Obsidian → Settings → Google Tasks Sync, enter your Client ID and Client Secret.
 4. Click **Connect Google Account** and complete the sign-in flow.
 5. Enter the name of the Google Tasks list you want to sync to.
+
+## Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| Client ID | — | OAuth 2.0 Client ID from your Google Cloud project |
+| Client Secret | — | OAuth 2.0 Client Secret (stored in OS keychain) |
+| Default list name | — | Name of the Google Tasks list to sync to |
+| Enable change log | on | Append a log of every sync operation to a vault file |
+| Log file path | `gtasks-sync-log.md` | Vault-relative path for the change log |
+
+### Change log format
+
+Each sync run appends a timestamped block to the log file:
+
+```
+### 2024-03-15 14:32:01
+
+- ✅ Created in Google Tasks | [[Buy milk]] | list: My Tasks
+- 🔄 Updated in Google Tasks | [[Doctor appointment]] | list: Work
+  - title: "Doctor" → "Doctor appointment"
+  - due: — → 2024-03-20
+- ⬇️ Updated from Google Tasks | [[Weekly review]] | list: My Tasks
+  - status: needsAction → completed
+```
 
 ## Development
 
