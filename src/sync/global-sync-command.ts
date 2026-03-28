@@ -1,6 +1,6 @@
 import { App, getAllTags, Modal, Notice, TFile } from 'obsidian';
 import { getAccessToken, resolveListId, fetchAllTasks, createTask, updateTask } from '../google-tasks/client';
-import { buildTaskPayload } from '../google-tasks/field-mapper';
+import { buildTaskPayload, taskMatchesPayload } from '../google-tasks/field-mapper';
 import { readSyncMeta, writeSyncMeta, writeStatusSyncBack } from './frontmatter';
 import { GoogleTask } from '../types';
 import GTasksSyncPlugin from '../main';
@@ -21,7 +21,8 @@ function determineAction(
 	taskId: string | null,
 	frontmatter: Record<string, unknown>,
 	activeTasks: Map<string, GoogleTask>,
-	completedTasks: Map<string, GoogleTask>
+	completedTasks: Map<string, GoogleTask>,
+	payload: Omit<GoogleTask, 'id'>
 ): ReconcileAction {
 	const noteIsActive = isActiveStatus(frontmatter['status']);
 
@@ -29,7 +30,8 @@ function determineAction(
 		return noteIsActive ? 'create' : 'skip';
 	}
 	if (activeTasks.has(taskId)) {
-		return 'update';
+		const remoteTask = activeTasks.get(taskId)!;
+		return taskMatchesPayload(remoteTask, payload) ? 'skip' : 'update';
 	}
 	if (completedTasks.has(taskId)) {
 		return noteIsActive ? 'mark-done' : 'skip';
@@ -193,18 +195,17 @@ async function runGlobalSyncWithData(
 		const cache = plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter ?? {};
 		const syncMeta = readSyncMeta(file, plugin.app);
-		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks);
+		const payload = buildTaskPayload(frontmatter, file, vaultName);
+		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, payload);
 		const result: NoteResult = { file, action };
 
 		try {
 			if (action === 'create' || action === 'recreate') {
-				const payload = buildTaskPayload(frontmatter, file, vaultName);
 				const created = await createTask(accessToken, listId, payload);
 				if (!created.id) throw new Error('API did not return a task ID');
 				await writeSyncMeta(file, plugin.app, created.id, listName, created.status);
 				activeTasks.set(created.id, created);
 			} else if (action === 'update') {
-				const payload = buildTaskPayload(frontmatter, file, vaultName);
 				const updated = await updateTask(accessToken, listId, syncMeta.taskId!, payload);
 				await writeSyncMeta(file, plugin.app, syncMeta.taskId!, listName, updated.status);
 			} else if (action === 'mark-done') {
@@ -326,11 +327,13 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 		skip: 0,
 	};
 
+	const vaultName = plugin.app.vault.getName();
 	for (const file of files) {
 		const cache = plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter ?? {};
 		const syncMeta = readSyncMeta(file, plugin.app);
-		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks);
+		const payload = buildTaskPayload(frontmatter, file, vaultName);
+		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, payload);
 		counts[action]++;
 	}
 

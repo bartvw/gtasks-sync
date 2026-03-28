@@ -49,11 +49,14 @@ Before processing any notes, the plugin SHALL fetch all tasks (active, completed
 For each `#task`-tagged note, the plugin SHALL determine the correct action using the following logic:
 - No `gtask-id` and note status is active: create a new task
 - No `gtask-id` and note status is done or cancelled: skip
-- `gtask-id` found in active tasks map: update the existing task
+- `gtask-id` found in active tasks map and local payload matches remote task: skip
+- `gtask-id` found in active tasks map and local payload differs from remote task: update the existing task
 - `gtask-id` found in completed tasks map and note status is active: write `status: done` to the note's frontmatter (status sync back); do not push to Google Tasks
 - `gtask-id` found in completed tasks map and note status is done or cancelled: skip
 - `gtask-id` not found in either map and note status is active: recreate (create new task, update `gtask-id` and `gtask-list`)
 - `gtask-id` not found in either map and note status is done or cancelled: skip
+
+The payload comparison SHALL compare `title`, `status`, `notes`, and the date portion (first 10 characters) of `due`. If the remote task has no `due` and the local payload has no `due`, they are considered equal on that field.
 
 After each successful create, update, or recreate, the plugin SHALL write `gtask-status` to the note's frontmatter reflecting the resulting Google Tasks status.
 
@@ -65,8 +68,12 @@ After each successful create, update, or recreate, the plugin SHALL write `gtask
 - **WHEN** a `#task` note has no `gtask-id` frontmatter field and its status is done or cancelled
 - **THEN** the note is skipped without any API calls or frontmatter changes
 
-#### Scenario: Note is already synced and task is active in Google Tasks
-- **WHEN** a `#task` note's `gtask-id` is found in the active tasks map
+#### Scenario: Note is already synced and task is unchanged
+- **WHEN** a `#task` note's `gtask-id` is found in the active tasks map and the local payload matches the remote task's `title`, `status`, `notes`, and `due` (date portion)
+- **THEN** the note is skipped without any API calls or frontmatter changes
+
+#### Scenario: Note is already synced and task has changed
+- **WHEN** a `#task` note's `gtask-id` is found in the active tasks map and at least one field of the local payload differs from the remote task
 - **THEN** the Google Task is updated with current frontmatter values and `gtask-status` is updated
 
 #### Scenario: Task was completed in Google Tasks but note is still active

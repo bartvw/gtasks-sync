@@ -1,6 +1,15 @@
 import { TFile } from 'obsidian';
 import { GoogleTask } from '../types';
 
+export function taskMatchesPayload(task: GoogleTask, payload: Omit<GoogleTask, 'id'>): boolean {
+	if (task.title !== payload.title) return false;
+	if (task.status !== payload.status) return false;
+	if (task.notes !== payload.notes) return false;
+	const taskDue = task.due ? task.due.slice(0, 10) : undefined;
+	const payloadDue = payload.due ? payload.due.slice(0, 10) : undefined;
+	return taskDue === payloadDue;
+}
+
 export function buildObsidianUri(vaultName: string, filePath: string): string {
 	return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(filePath)}`;
 }

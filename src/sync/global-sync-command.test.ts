@@ -12,6 +12,7 @@ vi.mock('./frontmatter');
 
 import * as client from '../google-tasks/client';
 import * as fieldMapper from '../google-tasks/field-mapper';
+// taskMatchesPayload is auto-mocked; default is set in beforeEach
 import * as frontmatter from './frontmatter';
 
 const mockNotice = vi.mocked(Notice);
@@ -55,6 +56,7 @@ beforeEach(() => {
 	vi.mocked(client.createTask).mockResolvedValue({ id: 'new-id', title: 'Task', status: 'needsAction' });
 	vi.mocked(client.updateTask).mockResolvedValue({ id: 'existing-id', title: 'Task', status: 'needsAction' });
 	vi.mocked(fieldMapper.buildTaskPayload).mockReturnValue({ title: 'Task', status: 'needsAction', notes: 'obsidian://...' });
+	vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(false);
 	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
 	vi.mocked(frontmatter.writeSyncMeta).mockResolvedValue(undefined);
 	vi.mocked(frontmatter.writeStatusSyncBack).mockResolvedValue(undefined);
@@ -190,6 +192,50 @@ describe('runGlobalSyncCommand - reconciliation', () => {
 		});
 		await runGlobalSyncCommand(plugin);
 		expect(client.createTask).not.toHaveBeenCalled();
+	});
+
+	it('skips when gtask-id is in active map and payload matches remote task', async () => {
+		const activeTask = makeGoogleTask('existing-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(true);
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeSyncMeta).not.toHaveBeenCalled();
+	});
+
+	it('updates when gtask-id is in active map and title differs', async () => {
+		const activeTask = makeGoogleTask('existing-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(false);
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+	});
+
+	it('updates when gtask-id is in active map and status differs', async () => {
+		const activeTask = makeGoogleTask('existing-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(false);
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done', title: 'Task' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+	});
+
+	it('updates when gtask-id is in active map and due date differs', async () => {
+		const activeTask = { ...makeGoogleTask('existing-id'), due: '2025-01-01T00:00:00.000Z' };
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(false);
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
 	});
 });
 
