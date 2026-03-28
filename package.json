@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "gtasks-sync",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Sync TaskNotes task notes to Google Tasks",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
