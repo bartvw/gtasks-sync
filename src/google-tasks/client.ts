@@ -43,7 +43,11 @@ export async function getAccessToken(app: App, settings: PluginSettings): Promis
 	return refreshed.accessToken;
 }
 
-async function apiFetch<T>(url: string, accessToken: string, options?: RequestInit): Promise<T> {
+async function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function apiFetch<T>(url: string, accessToken: string, options?: RequestInit, attempt = 0): Promise<T> {
 	const response = await fetch(url, {
 		...options,
 		headers: {
@@ -52,6 +56,13 @@ async function apiFetch<T>(url: string, accessToken: string, options?: RequestIn
 			...(options?.headers ?? {}),
 		},
 	});
+
+	if (response.status === 429) {
+		const retryAfter = response.headers.get('Retry-After');
+		const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : Math.pow(2, attempt) * 1000;
+		await sleep(waitMs);
+		return apiFetch<T>(url, accessToken, options, attempt + 1);
+	}
 
 	if (!response.ok) {
 		const text = await response.text();
@@ -117,4 +128,41 @@ export async function deleteTask(
 		accessToken,
 		{ method: 'DELETE' }
 	);
+}
+
+export async function getTask(
+	accessToken: string,
+	listId: string,
+	taskId: string
+): Promise<GoogleTask> {
+	return apiFetch<GoogleTask>(
+		`${BASE_URL}/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
+		accessToken
+	);
+}
+
+export async function fetchAllTasks(
+	accessToken: string,
+	listId: string
+): Promise<Map<string, GoogleTask>> {
+	const tasks = new Map<string, GoogleTask>();
+	let pageToken: string | undefined;
+
+	do {
+		const params = new URLSearchParams({ showCompleted: 'true', showHidden: 'true' });
+		if (pageToken) params.set('pageToken', pageToken);
+
+		const data = await apiFetch<{ items?: GoogleTask[]; nextPageToken?: string }>(
+			`${BASE_URL}/tasks/v1/lists/${encodeURIComponent(listId)}/tasks?${params}`,
+			accessToken
+		);
+
+		for (const task of data.items ?? []) {
+			if (task.id) tasks.set(task.id, task);
+		}
+
+		pageToken = data.nextPageToken;
+	} while (pageToken);
+
+	return tasks;
 }

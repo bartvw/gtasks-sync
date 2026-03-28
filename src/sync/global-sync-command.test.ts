@@ -1,0 +1,246 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { runGlobalSyncCommand, runDryRunCommand } from './global-sync-command';
+import { App, Notice, TFile, getAllTags } from 'obsidian';
+import GTasksSyncPlugin from '../main';
+import { GoogleTask } from '../types';
+
+// 'obsidian' is resolved via alias to src/__mocks__/obsidian.ts which exports
+// real vi.fn() stubs — no vi.mock('obsidian') needed (auto-mocking it breaks Modal inheritance).
+vi.mock('../google-tasks/client');
+vi.mock('../google-tasks/field-mapper');
+vi.mock('./frontmatter');
+
+import * as client from '../google-tasks/client';
+import * as fieldMapper from '../google-tasks/field-mapper';
+import * as frontmatter from './frontmatter';
+
+const mockNotice = vi.mocked(Notice);
+
+function makeFile(name: string, path?: string): TFile {
+	return { basename: name, path: path ?? `Tasks/${name}.md`, name: `${name}.md` } as unknown as TFile;
+}
+
+function makePlugin(options: {
+	markdownFiles?: TFile[];
+	getFrontmatter?: (file: TFile) => Record<string, unknown>;
+	settings?: Partial<{ defaultListName: string }>;
+} = {}): GTasksSyncPlugin {
+	const files = options.markdownFiles ?? [];
+	const getFm = options.getFrontmatter ?? (() => ({ status: 'todo', title: 'Task' }));
+
+	return {
+		app: {
+			vault: { getMarkdownFiles: vi.fn(() => files), getName: vi.fn(() => 'TestVault') },
+			metadataCache: {
+				getFileCache: vi.fn((file: TFile) => ({ frontmatter: getFm(file) })),
+			},
+		} as unknown as App,
+		settings: {
+			clientId: 'client-id',
+			defaultListName: options.settings?.defaultListName ?? 'My Tasks',
+		},
+	} as unknown as GTasksSyncPlugin;
+}
+
+function makeGoogleTask(id: string, status: 'needsAction' | 'completed' = 'needsAction'): GoogleTask {
+	return { id, title: 'Task', status };
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	vi.mocked(getAllTags).mockReturnValue(['#task']);
+	vi.mocked(client.getAccessToken).mockResolvedValue('access-token');
+	vi.mocked(client.resolveListId).mockResolvedValue('list-id-123');
+	vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map());
+	vi.mocked(client.createTask).mockResolvedValue({ id: 'new-id', title: 'Task', status: 'needsAction' });
+	vi.mocked(client.updateTask).mockResolvedValue({ id: 'existing-id', title: 'Task', status: 'needsAction' });
+	vi.mocked(fieldMapper.buildTaskPayload).mockReturnValue({ title: 'Task', status: 'needsAction', notes: 'obsidian://...' });
+	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+	vi.mocked(frontmatter.writeSyncMeta).mockResolvedValue(undefined);
+	vi.mocked(frontmatter.writeStatusSyncBack).mockResolvedValue(undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Note discovery
+// ---------------------------------------------------------------------------
+
+describe('runGlobalSyncCommand - note discovery', () => {
+	it('shows notice and exits when no #task notes are found', async () => {
+		vi.mocked(getAllTags).mockReturnValue([]);
+		const plugin = makePlugin({ markdownFiles: [makeFile('plain-note')] });
+		await runGlobalSyncCommand(plugin);
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('No task notes'));
+		expect(client.fetchAllTasks).not.toHaveBeenCalled();
+	});
+
+	it('does not open a modal when no task notes found', async () => {
+		vi.mocked(getAllTags).mockReturnValue([]);
+		const plugin = makePlugin({ markdownFiles: [makeFile('note')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.getAccessToken).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Auth / fetch failures
+// ---------------------------------------------------------------------------
+
+describe('runGlobalSyncCommand - failures', () => {
+	it('aborts with auth error notice', async () => {
+		vi.mocked(client.getAccessToken).mockRejectedValue(new Error('Not authenticated'));
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('Auth error'));
+		expect(client.fetchAllTasks).not.toHaveBeenCalled();
+	});
+
+	it('aborts with list error notice', async () => {
+		vi.mocked(client.resolveListId).mockRejectedValue(new Error('List not found'));
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('List error'));
+		expect(client.fetchAllTasks).not.toHaveBeenCalled();
+	});
+
+	it('aborts when fetchAllTasks fails', async () => {
+		vi.mocked(client.fetchAllTasks).mockRejectedValue(new Error('Network error'));
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch'));
+		expect(client.createTask).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation logic
+// ---------------------------------------------------------------------------
+
+describe('runGlobalSyncCommand - reconciliation', () => {
+	it('creates a task for an active note with no gtask-id', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+		const plugin = makePlugin({ markdownFiles: [makeFile('active-task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.createTask).toHaveBeenCalledWith('access-token', 'list-id-123', expect.any(Object));
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'new-id', 'My Tasks', 'needsAction');
+	});
+
+	it('skips a done note with no gtask-id', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('done-task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.createTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeSyncMeta).not.toHaveBeenCalled();
+	});
+
+	it('updates an existing task when gtask-id is in the active map', async () => {
+		const activeTask = makeGoogleTask('existing-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalled();
+	});
+
+	it('writes status done when gtask-id is in completed map and note is active', async () => {
+		const completedTask = makeGoogleTask('existing-id', 'completed');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', completedTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'todo' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).toHaveBeenCalled();
+	});
+
+	it('skips when gtask-id is in completed map and note is done', async () => {
+		const completedTask = makeGoogleTask('existing-id', 'completed');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', completedTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'completed' });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.createTask).not.toHaveBeenCalled();
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+	});
+
+	it('recreates a task when gtask-id is not found in either map and note is active', async () => {
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map()); // empty — task was deleted
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'deleted-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+		expect(client.createTask).toHaveBeenCalled();
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalled();
+	});
+
+	it('skips when gtask-id is not found in either map and note is done', async () => {
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map());
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'deleted-id', listName: 'My Tasks', gtaskStatus: null });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.createTask).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Dry-run counts
+// ---------------------------------------------------------------------------
+
+describe('runDryRunCommand - counts', () => {
+	it('shows notice when no task notes found', async () => {
+		vi.mocked(getAllTags).mockReturnValue([]);
+		const plugin = makePlugin({ markdownFiles: [makeFile('note')] });
+		await runDryRunCommand(plugin);
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('No task notes'));
+	});
+
+	it('counts each reconciliation action correctly', async () => {
+		const activeTask = makeGoogleTask('active-id');
+		const completedTask = makeGoogleTask('completed-id', 'completed');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([
+			['active-id', activeTask],
+			['completed-id', completedTask],
+		]));
+
+		const files = [
+			makeFile('new-active'),       // no gtask-id, active → create
+			makeFile('new-done'),         // no gtask-id, done → skip
+			makeFile('existing-active'),  // active-id in active map → update
+			makeFile('remote-done'),      // completed-id in completed map, note active → mark-done
+			makeFile('deleted-active'),   // missing-id not in map, active → recreate
+		];
+
+		const readSyncMetaMock = vi.mocked(frontmatter.readSyncMeta);
+		readSyncMetaMock
+			.mockReturnValueOnce({ taskId: null, listName: null, gtaskStatus: null })           // new-active
+			.mockReturnValueOnce({ taskId: null, listName: null, gtaskStatus: null })           // new-done
+			.mockReturnValueOnce({ taskId: 'active-id', listName: 'My Tasks', gtaskStatus: 'needsAction' })  // existing-active
+			.mockReturnValueOnce({ taskId: 'completed-id', listName: 'My Tasks', gtaskStatus: 'needsAction' }) // remote-done
+			.mockReturnValueOnce({ taskId: 'missing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' }); // deleted-active
+
+		const getFm = (file: TFile): Record<string, unknown> => {
+			if (file.basename === 'new-done') return { status: 'done' };
+			return { status: 'todo' };
+		};
+
+		const plugin = makePlugin({ markdownFiles: files, getFrontmatter: getFm });
+		await runDryRunCommand(plugin);
+
+		// Dry-run should NOT make any API writes
+		expect(client.createTask).not.toHaveBeenCalled();
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeSyncMeta).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+	});
+});

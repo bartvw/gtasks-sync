@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runSyncCommand } from './sync-command';
-import { App, Notice, TFile } from 'obsidian';
+import { App, Notice, TFile, getAllTags } from 'obsidian';
 import GTasksSyncPlugin from '../main';
 
 vi.mock('obsidian');
@@ -47,11 +47,14 @@ function makePlugin(options: {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(getAllTags).mockReturnValue(['#task']);
 	vi.mocked(client.getAccessToken).mockResolvedValue('access-token');
 	vi.mocked(client.resolveListId).mockResolvedValue('list-id-123');
+	vi.mocked(client.getTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'needsAction' });
 	vi.mocked(fieldMapper.buildTaskPayload).mockReturnValue({ title: 'My Task', status: 'needsAction', notes: 'obsidian://...' });
-	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null });
+	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
 	vi.mocked(frontmatter.writeSyncMeta).mockResolvedValue(undefined);
+	vi.mocked(frontmatter.writeStatusSyncBack).mockResolvedValue(undefined);
 });
 
 describe('runSyncCommand - no active file', () => {
@@ -64,10 +67,11 @@ describe('runSyncCommand - no active file', () => {
 });
 
 describe('runSyncCommand - not a task note', () => {
-	it('shows notice when frontmatter has no status field', async () => {
+	it('shows notice when note has no #task tag', async () => {
+		vi.mocked(getAllTags).mockReturnValue([]);
 		const plugin = makePlugin({ frontmatter: { title: 'Not a task' } });
 		await runSyncCommand(plugin);
-		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('status'));
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('#task'));
 		expect(client.getAccessToken).not.toHaveBeenCalled();
 	});
 });
@@ -92,34 +96,73 @@ describe('runSyncCommand - list not found', () => {
 
 describe('runSyncCommand - first push', () => {
 	it('creates task and writes frontmatter', async () => {
-		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null });
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
 		vi.mocked(client.createTask).mockResolvedValue({ id: 'new-task-id', title: 'My Task', status: 'needsAction' });
 
 		const plugin = makePlugin();
 		await runSyncCommand(plugin);
 
 		expect(client.createTask).toHaveBeenCalledWith('access-token', 'list-id-123', expect.any(Object));
-		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'new-task-id', 'My Tasks');
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'new-task-id', 'My Tasks', 'needsAction');
 		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('created'));
 	});
 });
 
 describe('runSyncCommand - update', () => {
-	it('updates existing task when list matches', async () => {
-		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks' });
+	it('fetches current task then updates when task is active', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(client.getTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'needsAction' });
 		vi.mocked(client.updateTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'needsAction' });
 
 		const plugin = makePlugin();
 		await runSyncCommand(plugin);
 
+		expect(client.getTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id');
 		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'existing-id', 'My Tasks', 'needsAction');
 		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('updated'));
+	});
+
+	it('syncs completion back when Google task is completed and gtask-status was needsAction', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(client.getTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'completed' });
+
+		const plugin = makePlugin();
+		await runSyncCommand(plugin);
+
+		expect(client.getTask).toHaveBeenCalled();
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).toHaveBeenCalled();
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('completed in Google Tasks'));
+	});
+
+	it('pushes local state when Google task is completed and gtask-status was already completed', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'completed' });
+		vi.mocked(client.getTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'completed' });
+		vi.mocked(client.updateTask).mockResolvedValue({ id: 'existing-id', title: 'My Task', status: 'completed' });
+
+		const plugin = makePlugin();
+		await runSyncCommand(plugin);
+
+		expect(client.updateTask).toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+	});
+
+	it('shows error when getTask fails', async () => {
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: null });
+		vi.mocked(client.getTask).mockRejectedValue(new Error('Task not found'));
+
+		const plugin = makePlugin();
+		await runSyncCommand(plugin);
+
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('Sync failed'));
+		expect(client.updateTask).not.toHaveBeenCalled();
 	});
 });
 
 describe('runSyncCommand - list move', () => {
 	it('creates in new list, deletes from old list', async () => {
-		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'old-task-id', listName: 'Old List' });
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'old-task-id', listName: 'Old List', gtaskStatus: null });
 		vi.mocked(client.createTask).mockResolvedValue({ id: 'new-task-id', title: 'My Task', status: 'needsAction' });
 		vi.mocked(client.resolveListId)
 			.mockResolvedValueOnce('new-list-id') // for new list
@@ -130,13 +173,13 @@ describe('runSyncCommand - list move', () => {
 		await runSyncCommand(plugin);
 
 		expect(client.createTask).toHaveBeenCalledWith('access-token', 'new-list-id', expect.any(Object));
-		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'new-task-id', 'New List');
+		expect(frontmatter.writeSyncMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'new-task-id', 'New List', 'needsAction');
 		expect(client.deleteTask).toHaveBeenCalledWith('access-token', 'old-list-id', 'old-task-id');
 		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('moved'));
 	});
 
 	it('shows warning when delete from old list fails', async () => {
-		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'old-task-id', listName: 'Old List' });
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'old-task-id', listName: 'Old List', gtaskStatus: null });
 		vi.mocked(client.createTask).mockResolvedValue({ id: 'new-task-id', title: 'My Task', status: 'needsAction' });
 		vi.mocked(client.resolveListId)
 			.mockResolvedValueOnce('new-list-id')
