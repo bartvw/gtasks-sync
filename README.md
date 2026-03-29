@@ -51,6 +51,32 @@ Each sync run appends a timestamped block to the log file:
   - status: needsAction → completed
 ```
 
+## How sync works
+
+Global Sync reconciles each `#task` note against Google Tasks using a simple set of rules. The plugin fetches **all** tasks from Google (active and completed) before processing any notes, then decides what to do for each note based on its current state and the last-known state recorded in frontmatter (`gtask-status`).
+
+### Decision table
+
+| Note state | Google state | Last synced as (`gtask-status`) | Action |
+|---|---|---|---|
+| No `gtask-id`, active | — | — | **Create** new task in Google |
+| No `gtask-id`, done/cancelled | — | — | Skip |
+| `gtask-id` in active map | active | `needsAction` (or no prior sync) | **Update** Google if payload changed, otherwise skip |
+| `gtask-id` in active map | active | `completed` (Google un-completed it) | Note still done → **mark note undone** (`status: open`) |
+| `gtask-id` in active map | active | `completed` (Google un-completed it) | Note already active → **sync meta** (update `gtask-status` only) |
+| `gtask-id` in completed map | completed | `needsAction` (both just completed) | **Sync meta** (update `gtask-status` only) |
+| `gtask-id` in completed map | completed | `completed` (or no prior sync) | Note still active → **mark note done** (`status: done`) |
+| `gtask-id` in completed map | completed | any | Note already done → Skip |
+| `gtask-id` not found, active | deleted | — | **Recreate** task in Google |
+| `gtask-id` not found, done/cancelled | deleted | — | Skip |
+
+### Key concepts
+
+- **`gtask-status` frontmatter field** — written after every sync to record what Google's status was at the time. This lets the plugin detect *changes on the Google side* between syncs.
+- **Mark note undone** — when a task is un-completed in Google (moved back to the active list) but the note is still marked done, the plugin writes `status: open` to the note so both sides agree.
+- **Sync meta** — when both sides independently made the same change (e.g. both completed), only `gtask-status` is updated to reflect the new agreed state. No API call to Google is needed.
+- **Payload comparison** — before updating Google, the plugin compares `title`, `status`, `notes`, and `due` (date portion only). If nothing changed, the note is skipped to avoid redundant API calls.
+
 ## Development
 
 ```sh
