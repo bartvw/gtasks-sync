@@ -1,28 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { listTasklists, resolveListId, createTask, updateTask, deleteTask, getTask, fetchAllTasks } from './client';
 import { GoogleTask } from '../types';
-import { requestUrl } from 'obsidian';
+import { requestUrl, RequestUrlResponse } from 'obsidian';
 
 vi.mock('obsidian');
 
 const TOKEN = 'test-access-token';
 
+function makeResponse(status: number, json: unknown, text = '', headers: Record<string, string> = {}): RequestUrlResponse {
+	return { status, json, text, headers, arrayBuffer: new ArrayBuffer(0) };
+}
+
 function mockRequestUrlOk(body: unknown, status = 200) {
-	vi.mocked(requestUrl).mockResolvedValue({
-		status,
-		json: body,
-		text: '',
-		headers: {},
-	} as any);
+	vi.mocked(requestUrl).mockResolvedValue(makeResponse(status, body));
 }
 
 function mockRequestUrlError(status: number, text = 'error') {
-	vi.mocked(requestUrl).mockResolvedValue({
-		status,
-		json: {},
-		text,
-		headers: {},
-	} as any);
+	vi.mocked(requestUrl).mockResolvedValue(makeResponse(status, {}, text));
 }
 
 beforeEach(() => {
@@ -87,7 +81,7 @@ describe('updateTask', () => {
 
 describe('deleteTask', () => {
 	it('DELETEs the task', async () => {
-		vi.mocked(requestUrl).mockResolvedValue({ status: 204, json: {}, text: '', headers: {} } as any);
+		vi.mocked(requestUrl).mockResolvedValue(makeResponse(204, {}));
 		await expect(deleteTask(TOKEN, 'list-1', 'task-1')).resolves.toBeUndefined();
 		expect(vi.mocked(requestUrl)).toHaveBeenCalledWith(
 			expect.objectContaining({ url: expect.stringContaining('/tasks/task-1'), method: 'DELETE' })
@@ -134,8 +128,8 @@ describe('fetchAllTasks', () => {
 		const page1: GoogleTask[] = [{ id: 'task-1', title: 'Task 1', status: 'needsAction' }];
 		const page2: GoogleTask[] = [{ id: 'task-2', title: 'Task 2', status: 'completed' }];
 		vi.mocked(requestUrl)
-			.mockResolvedValueOnce({ status: 200, json: { items: page1, nextPageToken: 'token-abc' }, text: '', headers: {} } as any)
-			.mockResolvedValueOnce({ status: 200, json: { items: page2 }, text: '', headers: {} } as any);
+			.mockResolvedValueOnce(makeResponse(200, { items: page1, nextPageToken: 'token-abc' }))
+			.mockResolvedValueOnce(makeResponse(200, { items: page2 }));
 		const result = await fetchAllTasks(TOKEN, 'list-1');
 		expect(result.size).toBe(2);
 		expect(result.has('task-1')).toBe(true);
@@ -171,8 +165,8 @@ describe('apiFetch - rate limit handling', () => {
 	it('retries after Retry-After header duration on 429', async () => {
 		const task: GoogleTask = { id: 'task-1', title: 'My Task', status: 'needsAction' };
 		vi.mocked(requestUrl)
-			.mockResolvedValueOnce({ status: 429, json: {}, text: 'rate limited', headers: { 'retry-after': '2' } } as any)
-			.mockResolvedValueOnce({ status: 200, json: task, text: '', headers: {} } as any);
+			.mockResolvedValueOnce(makeResponse(429, {}, 'rate limited', { 'retry-after': '2' }))
+			.mockResolvedValueOnce(makeResponse(200, task));
 
 		const promise = getTask(TOKEN, 'list-1', 'task-1');
 		await vi.advanceTimersByTimeAsync(2000);
@@ -185,8 +179,8 @@ describe('apiFetch - rate limit handling', () => {
 	it('retries with exponential backoff when Retry-After header is absent on 429', async () => {
 		const task: GoogleTask = { id: 'task-1', title: 'My Task', status: 'needsAction' };
 		vi.mocked(requestUrl)
-			.mockResolvedValueOnce({ status: 429, json: {}, text: 'rate limited', headers: {} } as any)
-			.mockResolvedValueOnce({ status: 200, json: task, text: '', headers: {} } as any);
+			.mockResolvedValueOnce(makeResponse(429, {}, 'rate limited'))
+			.mockResolvedValueOnce(makeResponse(200, task));
 
 		const promise = getTask(TOKEN, 'list-1', 'task-1');
 		await vi.advanceTimersByTimeAsync(1000); // 2^0 * 1000ms backoff
