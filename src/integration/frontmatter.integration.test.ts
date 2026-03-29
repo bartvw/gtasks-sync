@@ -11,22 +11,22 @@ import os from 'os';
 
 // Minimal stub for the Obsidian App that reads/writes real files.
 // We implement processFrontMatter by manually parsing/writing YAML frontmatter.
-import yaml from 'js-yaml';
+import { parse, stringify } from 'yaml';
 
 async function readFrontMatter(filePath: string): Promise<Record<string, unknown>> {
 	const content = await fs.readFile(filePath, 'utf-8');
 	const match = content.match(/^---\n([\s\S]*?)\n---/);
 	if (!match) return {};
-	return (yaml.load(match[1] ?? '') as Record<string, unknown>) ?? {};
+	return (parse(match[1] ?? '') as Record<string, unknown>) ?? {};
 }
 
 async function writeFrontMatter(filePath: string, updates: Record<string, unknown>): Promise<void> {
 	const content = await fs.readFile(filePath, 'utf-8');
 	const match = content.match(/^---\n([\s\S]*?)\n---/);
-	const existing = match ? ((yaml.load(match[1] ?? '') as Record<string, unknown>) ?? {}) : {};
+	const existing = match ? ((parse(match[1] ?? '') as Record<string, unknown>) ?? {}) : {};
 	const merged = { ...existing, ...updates };
 	const body = match ? content.slice(match[0].length) : `\n\n${content}`;
-	const newContent = `---\n${yaml.dump(merged).trimEnd()}\n---${body}`;
+	const newContent = `---\n${stringify(merged).trimEnd()}\n---${body}`;
 	await fs.writeFile(filePath, newContent, 'utf-8');
 }
 
