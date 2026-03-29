@@ -27,6 +27,12 @@ export default tseslint.config(
 	// but the runtime object is a custom iterable. Cast to any[] to spread it correctly.
 	...(obsidianmd.configs!.recommended as any[]),
 	{
+		plugins: { obsidianmd },
+		rules: {
+			"obsidianmd/ui/sentence-case": ["error", { brands: ["Google Tasks"] }],
+		},
+	},
+	{
 		files: TEST_GLOBS,
 		rules: {
 			"obsidianmd/ui/sentence-case": "off",
