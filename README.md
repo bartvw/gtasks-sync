@@ -8,6 +8,7 @@ An Obsidian plugin that syncs [TaskNotes](https://obsidian.md/plugins?id=obsidia
 - **Command: Global Sync** — vault-wide reconciliation; discovers all `#task` notes and syncs them to Google Tasks in one run with a progress modal.
 - **Command: Dry Run** — previews what Global Sync would do (create / update / mark done / skip) without making any changes.
 - Changing the default list moves the task to the new list automatically.
+- **Bidirectional field sync** — tracks `title` and `due` per-field using sentinel values; pulls Google-side changes back to the note and pushes local changes to Google, with configurable conflict resolution when both sides changed.
 - Skips API calls when no tracked fields have changed since the last sync.
 - **Change log** — appends a human-readable Markdown log of every sync operation (creates, updates, deletes) to a configurable vault file after each run.
 - OAuth 2.0 authentication using your own Google Cloud credentials (desktop only).
@@ -35,6 +36,7 @@ An Obsidian plugin that syncs [TaskNotes](https://obsidian.md/plugins?id=obsidia
 | Default list name | — | Name of the Google Tasks list to sync to |
 | Enable change log | on | Append a log of every sync operation to a vault file |
 | Log file path | `gtasks-sync-log.md` | Vault-relative path for the change log |
+| Conflict resolution | `google-wins` | When both the note and Google changed the same field since the last sync: `google-wins` uses Google's value, `local-wins` uses the note's value |
 
 ### Change log format
 
@@ -53,7 +55,7 @@ Each sync run appends a timestamped block to the log file:
 
 ## How sync works
 
-Global Sync reconciles each `#task` note against Google Tasks using a simple set of rules. The plugin fetches **all** tasks from Google (active and completed) before processing any notes, then decides what to do for each note based on its current state and the last-known state recorded in frontmatter (`gtask-status`).
+Global Sync reconciles each `#task` note against Google Tasks using a simple set of rules. The plugin fetches **all** tasks from Google (active and completed) before processing any notes, then decides what to do for each note based on its current state and the last-known state recorded in frontmatter (`gtask-status`, `gtask-title`, `gtask-due`).
 
 ### Decision table
 
@@ -61,7 +63,7 @@ Global Sync reconciles each `#task` note against Google Tasks using a simple set
 | ------------------------------------ | ------------ | ------------------------------------ | ---------------------------------------------------------------- |
 | No `gtask-id`, active                | —            | —                                    | **Create** new task in Google                                    |
 | No `gtask-id`, done/cancelled        | —            | —                                    | Skip                                                             |
-| `gtask-id` in active map             | active       | `needsAction` (or no prior sync)     | **Update** Google if payload changed, otherwise skip             |
+| `gtask-id` in active map             | active       | `needsAction` (or no prior sync)     | Apply **per-field resolution** for `title`/`due` (see below); push local changes, pull Google changes, or skip if all unchanged |
 | `gtask-id` in active map             | active       | `completed` (Google un-completed it) | Note still done → **mark note undone** (`status: open`)          |
 | `gtask-id` in active map             | active       | `completed` (Google un-completed it) | Note already active → **sync meta** (update `gtask-status` only) |
 | `gtask-id` in completed map          | completed    | `needsAction` (both just completed)  | **Sync meta** (update `gtask-status` only)                       |
@@ -73,9 +75,24 @@ Global Sync reconciles each `#task` note against Google Tasks using a simple set
 ### Key concepts
 
 - **`gtask-status` frontmatter field** — written after every sync to record what Google's status was at the time. This lets the plugin detect *changes on the Google side* between syncs.
+- **`gtask-title` / `gtask-due` sentinel fields** — written after every create, update, or recreate to record the `title` and `due` values acknowledged by Google at the time. Used by per-field resolution to detect which side changed each field since the last sync.
 - **Mark note undone** — when a task is un-completed in Google (moved back to the active list) but the note is still marked done, the plugin writes `status: open` to the note so both sides agree.
 - **Sync meta** — when both sides independently made the same change (e.g. both completed), only `gtask-status` is updated to reflect the new agreed state. No API call to Google is needed.
-- **Payload comparison** — before updating Google, the plugin compares `title`, `status`, `notes`, and `due` (date portion only). If nothing changed, the note is skipped to avoid redundant API calls.
+- **Payload comparison** — before updating Google, the plugin compares `title`, `status`, and `due` (date portion only). If nothing changed, the note is skipped to avoid redundant API calls.
+
+### Per-field bidirectional sync
+
+For each tracked field (`title`, `due`), the plugin compares the local value, the Google value, and the last-synced sentinel to decide what to do:
+
+| Local vs sentinel | Google vs sentinel | Action |
+|---|---|---|
+| Unchanged | Unchanged | **Skip** — no change on either side |
+| Changed | Unchanged | **Push** — include local value in the Google API payload |
+| Unchanged | Changed | **Pull** — write Google value to note frontmatter |
+| Changed to same value | Changed to same value | **Pull** — both sides agree; write shared value to note, no API call |
+| Changed to different value | Changed to different value | **Conflict** — resolved by the `conflictResolution` setting |
+
+When a note has a `gtask-id` but no sentinel (first sync after upgrade), the current local value is treated as the sentinel, so the first sync behaves as a push.
 
 ## Development
 
