@@ -3,6 +3,13 @@ import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 import { globalIgnores } from "eslint/config";
 
+const TEST_GLOBS = [
+	"src/*/*.test.ts",
+	"src/__mocks__/*.ts",
+	"src/integration/*.ts",
+	"vitest.config.ts",
+];
+
 export default tseslint.config(
 	{
 		languageOptions: {
@@ -10,18 +17,24 @@ export default tseslint.config(
 				...globals.browser,
 			},
 			parserOptions: {
-				projectService: {
-					allowDefaultProject: [
-						'eslint.config.js',
-						'manifest.json'
-					]
-				},
+				project: ['./tsconfig.json', './tsconfig.test.json'],
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: ['.json']
 			},
 		},
 	},
-	...obsidianmd.configs.recommended,
+	// eslint-plugin-obsidianmd types its configs as optional and without [Symbol.iterator],
+	// but the runtime object is a custom iterable. Cast to any[] to spread it correctly.
+	...(obsidianmd.configs!.recommended as any[]),
+	{
+		files: TEST_GLOBS,
+		rules: {
+			"obsidianmd/ui/sentence-case": "off",
+			"obsidianmd/settings-tab/no-manual-html-headings": "off",
+			"obsidianmd/no-static-styles-assignment": "off",
+			"no-restricted-globals": "off",
+		},
+	},
 	globalIgnores([
 		"node_modules",
 		"dist",
