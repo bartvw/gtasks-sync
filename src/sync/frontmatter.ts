@@ -45,3 +45,16 @@ export async function writeStatusSyncBack(file: TFile, app: App): Promise<void> 
 		fm['gtask-status'] = 'completed';
 	});
 }
+
+export async function writeStatusUndone(file: TFile, app: App): Promise<void> {
+	await app.fileManager.processFrontMatter(file, fm => {
+		fm['status'] = 'open';
+		fm['gtask-status'] = 'needsAction';
+	});
+}
+
+export async function writeGtaskStatusOnly(file: TFile, app: App, gtaskStatus: 'needsAction' | 'completed'): Promise<void> {
+	await app.fileManager.processFrontMatter(file, fm => {
+		fm['gtask-status'] = gtaskStatus;
+	});
+}

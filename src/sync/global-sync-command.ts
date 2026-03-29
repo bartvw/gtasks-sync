@@ -1,13 +1,13 @@
 import { App, getAllTags, Modal, Notice, TFile } from 'obsidian';
 import { getAccessToken, resolveListId, fetchAllTasks, createTask, updateTask } from '../google-tasks/client';
 import { buildTaskPayload, taskMatchesPayload, extractBodyFromGoogleNotes } from '../google-tasks/field-mapper';
-import { readSyncMeta, writeSyncMeta, writeStatusSyncBack, readNoteBody } from './frontmatter';
+import { readSyncMeta, writeSyncMeta, writeStatusSyncBack, writeStatusUndone, writeGtaskStatusOnly, readNoteBody } from './frontmatter';
 import { ChangeLogger, buildFieldChanges } from './change-logger';
 import { createNoteFromGoogleTask } from './note-importer';
 import { GoogleTask } from '../types';
 import GTasksSyncPlugin from '../main';
 
-type ReconcileAction = 'create' | 'update' | 'recreate' | 'mark-done' | 'skip';
+type ReconcileAction = 'create' | 'update' | 'recreate' | 'mark-done' | 'mark-undone' | 'sync-meta' | 'skip';
 
 interface NoteResult {
 	file: TFile;
@@ -24,7 +24,8 @@ function determineAction(
 	frontmatter: Record<string, unknown>,
 	activeTasks: Map<string, GoogleTask>,
 	completedTasks: Map<string, GoogleTask>,
-	payload: Omit<GoogleTask, 'id'>
+	payload: Omit<GoogleTask, 'id'>,
+	gtaskStatus: 'needsAction' | 'completed' | null
 ): ReconcileAction {
 	const noteIsActive = isActiveStatus(frontmatter['status']);
 
@@ -32,10 +33,18 @@ function determineAction(
 		return noteIsActive ? 'create' : 'skip';
 	}
 	if (activeTasks.has(taskId)) {
+		if (gtaskStatus === 'completed') {
+			// Google un-completed the task since last sync
+			return noteIsActive ? 'sync-meta' : 'mark-undone';
+		}
 		const remoteTask = activeTasks.get(taskId)!;
 		return taskMatchesPayload(remoteTask, payload) ? 'skip' : 'update';
 	}
 	if (completedTasks.has(taskId)) {
+		if (gtaskStatus === 'needsAction' && !noteIsActive) {
+			// Both sides completed since last sync — agree, update meta only
+			return 'sync-meta';
+		}
 		return noteIsActive ? 'mark-done' : 'skip';
 	}
 	// Not found in either map — task was deleted
@@ -149,6 +158,8 @@ class DryRunSummaryModal extends Modal {
 			['Would update', this.counts.update],
 			['Would recreate', this.counts.recreate],
 			['Would mark done', this.counts['mark-done']],
+			['Would mark undone', this.counts['mark-undone']],
+			['Would sync meta', this.counts['sync-meta']],
 			['Would skip', this.counts.skip],
 		];
 		if (this.importCount !== null) {
@@ -219,7 +230,7 @@ async function runGlobalSyncWithData(
 		const remoteForBody = syncMeta.taskId ? activeTasks.get(syncMeta.taskId) : undefined;
 		const effectiveBody = noteBody || (remoteForBody ? extractBodyFromGoogleNotes(remoteForBody.notes ?? '') : '');
 		const payload = buildTaskPayload(frontmatter, file, vaultName, effectiveBody);
-		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, payload);
+		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, payload, syncMeta.gtaskStatus);
 		const result: NoteResult = { file, action };
 
 		try {
@@ -259,6 +270,27 @@ async function runGlobalSyncWithData(
 					noteWikilink: file.basename,
 					listName,
 					fieldChanges: [{ field: 'status', oldValue: 'needsAction', newValue: 'completed' }],
+				});
+			} else if (action === 'mark-undone') {
+				await writeStatusUndone(file, plugin.app);
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'from-google',
+					operation: 'updated',
+					noteWikilink: file.basename,
+					listName,
+					fieldChanges: [{ field: 'status', oldValue: 'completed', newValue: 'needsAction' }],
+				});
+			} else if (action === 'sync-meta') {
+				const currentGtaskStatus = activeTasks.has(syncMeta.taskId!) ? 'needsAction' : 'completed';
+				await writeGtaskStatusOnly(file, plugin.app, currentGtaskStatus);
+				logger?.record({
+					timestamp: new Date().toISOString(),
+					direction: 'from-google',
+					operation: 'updated',
+					noteWikilink: file.basename,
+					listName,
+					fieldChanges: [{ field: 'gtask-status', oldValue: syncMeta.gtaskStatus ?? '', newValue: currentGtaskStatus }],
 				});
 			}
 			// 'skip' requires no action
@@ -405,6 +437,8 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 		update: 0,
 		recreate: 0,
 		'mark-done': 0,
+		'mark-undone': 0,
+		'sync-meta': 0,
 		skip: 0,
 	};
 
@@ -422,7 +456,7 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 		}
 
 		const payload = buildTaskPayload(frontmatter, file, vaultName);
-		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, payload);
+		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, payload, syncMeta.gtaskStatus);
 		counts[action]++;
 	}
 

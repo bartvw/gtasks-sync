@@ -17,6 +17,8 @@ import * as fieldMapper from '../google-tasks/field-mapper';
 import * as frontmatter from './frontmatter';
 import * as noteImporter from './note-importer';
 
+// writeStatusUndone and writeGtaskStatusOnly are auto-mocked via vi.mock('./frontmatter')
+
 const mockNotice = vi.mocked(Notice);
 
 function makeFile(name: string, path?: string): TFile {
@@ -71,6 +73,8 @@ beforeEach(() => {
 	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
 	vi.mocked(frontmatter.writeSyncMeta).mockResolvedValue(undefined);
 	vi.mocked(frontmatter.writeStatusSyncBack).mockResolvedValue(undefined);
+	vi.mocked(frontmatter.writeStatusUndone).mockResolvedValue(undefined);
+	vi.mocked(frontmatter.writeGtaskStatusOnly).mockResolvedValue(undefined);
 	vi.mocked(frontmatter.readNoteBody).mockResolvedValue('');
 	vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
 	vi.mocked(noteImporter.createNoteFromGoogleTask).mockResolvedValue({ basename: 'Orphan Task' } as unknown as import('obsidian').TFile);
@@ -250,6 +254,67 @@ describe('runGlobalSyncCommand - reconciliation', () => {
 		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
 		await runGlobalSyncCommand(plugin);
 		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+	});
+
+	// 4.1 Task un-completed in Google (now active), note is done → mark-undone
+	it('writes status open when gtask-id is in active map, gtask-status was completed, and note is done', async () => {
+		const activeTask = makeGoogleTask('existing-id', 'needsAction');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'completed' });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusUndone).toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+	});
+
+	// 4.2 Task un-completed in Google (now active), note is already active → sync-meta (needsAction)
+	it('updates only gtask-status when gtask-id is in active map, gtask-status was completed, and note is active', async () => {
+		const activeTask = makeGoogleTask('existing-id', 'needsAction');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'completed' });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'todo' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusUndone).not.toHaveBeenCalled();
+		expect(frontmatter.writeGtaskStatusOnly).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'needsAction');
+	});
+
+	// 4.3 Task completed in Google, note is already done, gtask-status was needsAction → sync-meta (completed)
+	it('updates only gtask-status when gtask-id is in completed map, gtask-status was needsAction, and note is done', async () => {
+		const completedTask = makeGoogleTask('existing-id', 'completed');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', completedTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).not.toHaveBeenCalled();
+		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+		expect(frontmatter.writeGtaskStatusOnly).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'completed');
+	});
+
+	// 4.4 gtask-status is null, task is active in Google, note is done → falls back to update (existing behavior)
+	it('falls back to update when gtask-status is null, task is active in Google, and note is done', async () => {
+		const activeTask = makeGoogleTask('existing-id', 'needsAction');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', activeTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: null });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(false);
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			getFrontmatter: () => ({ status: 'done' }),
+		});
+		await runGlobalSyncCommand(plugin);
+		expect(client.updateTask).toHaveBeenCalledWith('access-token', 'list-id-123', 'existing-id', expect.any(Object));
+		expect(frontmatter.writeStatusUndone).not.toHaveBeenCalled();
+		expect(frontmatter.writeGtaskStatusOnly).not.toHaveBeenCalled();
 	});
 });
 
