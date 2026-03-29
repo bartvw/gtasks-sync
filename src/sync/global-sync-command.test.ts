@@ -480,7 +480,7 @@ describe('runGlobalSyncCommand - import pass', () => {
 
 		await runGlobalSyncCommand(plugin);
 		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
-		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('Import folder not configured'));
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('import folder not configured'));
 	});
 
 	it('does not import tasks already matched to vault notes', async () => {

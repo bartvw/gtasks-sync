@@ -9,12 +9,14 @@ export const MarkdownView = vi.fn();
 export const SecretComponent = vi.fn();
 export const Setting = vi.fn();
 export const getAllTags = vi.fn(() => [] as string[]);
+export const requestUrl = vi.fn();
 
 function makeContentEl(): Record<string, unknown> {
 	const el: Record<string, unknown> = {
 		empty: vi.fn(),
 		setText: vi.fn(),
 		addEventListener: vi.fn(),
+		addClass: vi.fn(),
 		style: {},
 	};
 	el.createEl = vi.fn(() => el);

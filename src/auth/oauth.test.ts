@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildAuthUrl, exchangeCodeForTokens, refreshAccessToken } from './oauth';
+import { requestUrl } from 'obsidian';
+
+vi.mock('obsidian');
 
 const CLIENT_ID = 'test-client-id';
 const CLIENT_SECRET = 'test-client-secret';
@@ -18,19 +21,16 @@ describe('buildAuthUrl', () => {
 
 describe('exchangeCodeForTokens', () => {
 	beforeEach(() => {
-		vi.stubGlobal('fetch', vi.fn());
+		vi.mocked(requestUrl).mockReset();
 	});
 
 	it('returns TokenData on success', async () => {
-		const mockFetch = vi.mocked(fetch);
-		mockFetch.mockResolvedValueOnce({
-			ok: true,
-			json: async () => ({
-				access_token: 'access-123',
-				refresh_token: 'refresh-456',
-				expires_in: 3600,
-			}),
-		} as Response);
+		vi.mocked(requestUrl).mockResolvedValueOnce({
+			status: 200,
+			json: { access_token: 'access-123', refresh_token: 'refresh-456', expires_in: 3600 },
+			text: '',
+			headers: {},
+		} as any);
 
 		const before = Date.now();
 		const tokens = await exchangeCodeForTokens('code', CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
@@ -43,11 +43,12 @@ describe('exchangeCodeForTokens', () => {
 	});
 
 	it('throws when API returns error', async () => {
-		vi.mocked(fetch).mockResolvedValueOnce({
-			ok: false,
+		vi.mocked(requestUrl).mockResolvedValueOnce({
 			status: 400,
-			text: async () => '{"error":"invalid_grant"}',
-		} as Response);
+			json: {},
+			text: '{"error":"invalid_grant"}',
+			headers: {},
+		} as any);
 
 		await expect(
 			exchangeCodeForTokens('bad-code', CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)
@@ -55,14 +56,12 @@ describe('exchangeCodeForTokens', () => {
 	});
 
 	it('throws when no refresh_token in response', async () => {
-		vi.mocked(fetch).mockResolvedValueOnce({
-			ok: true,
-			json: async () => ({
-				access_token: 'access-123',
-				expires_in: 3600,
-				// no refresh_token
-			}),
-		} as Response);
+		vi.mocked(requestUrl).mockResolvedValueOnce({
+			status: 200,
+			json: { access_token: 'access-123', expires_in: 3600 },
+			text: '',
+			headers: {},
+		} as any);
 
 		await expect(
 			exchangeCodeForTokens('code', CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)
@@ -72,17 +71,16 @@ describe('exchangeCodeForTokens', () => {
 
 describe('refreshAccessToken', () => {
 	beforeEach(() => {
-		vi.stubGlobal('fetch', vi.fn());
+		vi.mocked(requestUrl).mockReset();
 	});
 
 	it('returns new TokenData preserving refreshToken', async () => {
-		vi.mocked(fetch).mockResolvedValueOnce({
-			ok: true,
-			json: async () => ({
-				access_token: 'new-access',
-				expires_in: 3600,
-			}),
-		} as Response);
+		vi.mocked(requestUrl).mockResolvedValueOnce({
+			status: 200,
+			json: { access_token: 'new-access', expires_in: 3600 },
+			text: '',
+			headers: {},
+		} as any);
 
 		const tokens = await refreshAccessToken('refresh-abc', CLIENT_ID, CLIENT_SECRET);
 		expect(tokens.accessToken).toBe('new-access');
@@ -90,11 +88,12 @@ describe('refreshAccessToken', () => {
 	});
 
 	it('throws when refresh fails', async () => {
-		vi.mocked(fetch).mockResolvedValueOnce({
-			ok: false,
+		vi.mocked(requestUrl).mockResolvedValueOnce({
 			status: 401,
-			text: async () => '{"error":"invalid_grant"}',
-		} as Response);
+			json: {},
+			text: '{"error":"invalid_grant"}',
+			headers: {},
+		} as any);
 
 		await expect(
 			refreshAccessToken('bad-refresh', CLIENT_ID, CLIENT_SECRET)
