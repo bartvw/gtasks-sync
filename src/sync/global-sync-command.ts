@@ -1,8 +1,9 @@
 import { App, getAllTags, Modal, Notice, TFile } from 'obsidian';
 import { getAccessToken, resolveListId, fetchAllTasks, createTask, updateTask } from '../google-tasks/client';
-import { buildTaskPayload, taskMatchesPayload } from '../google-tasks/field-mapper';
-import { readSyncMeta, writeSyncMeta, writeStatusSyncBack } from './frontmatter';
+import { buildTaskPayload, taskMatchesPayload, extractBodyFromGoogleNotes } from '../google-tasks/field-mapper';
+import { readSyncMeta, writeSyncMeta, writeStatusSyncBack, readNoteBody } from './frontmatter';
 import { ChangeLogger, buildFieldChanges } from './change-logger';
+import { createNoteFromGoogleTask } from './note-importer';
 import { GoogleTask } from '../types';
 import GTasksSyncPlugin from '../main';
 
@@ -105,6 +106,7 @@ class SyncProgressModal extends Modal {
 
 class DryRunSummaryModal extends Modal {
 	private counts: Record<ReconcileAction, number>;
+	private importCount: number | null;
 	private plugin: GTasksSyncPlugin;
 	private files: TFile[];
 	private accessToken: string;
@@ -117,6 +119,7 @@ class DryRunSummaryModal extends Modal {
 		app: App,
 		plugin: GTasksSyncPlugin,
 		counts: Record<ReconcileAction, number>,
+		importCount: number | null,
 		files: TFile[],
 		accessToken: string,
 		listId: string,
@@ -127,6 +130,7 @@ class DryRunSummaryModal extends Modal {
 		super(app);
 		this.plugin = plugin;
 		this.counts = counts;
+		this.importCount = importCount;
 		this.files = files;
 		this.accessToken = accessToken;
 		this.listId = listId;
@@ -147,6 +151,9 @@ class DryRunSummaryModal extends Modal {
 			['Would mark done', this.counts['mark-done']],
 			['Would skip', this.counts.skip],
 		];
+		if (this.importCount !== null) {
+			rows.push(['Would import', this.importCount]);
+		}
 		for (const [label, count] of rows) {
 			const tr = table.createEl('tr');
 			tr.createEl('td', { text: label });
@@ -191,13 +198,27 @@ async function runGlobalSyncWithData(
 	const results: NoteResult[] = [];
 	let processed = 0;
 
+	// 5.1 Track seen task IDs for orphan detection
+	const seenTaskIds = new Set<string>();
+
 	for (const file of files) {
 		if (modal.cancelled) break;
 
 		const cache = plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter ?? {};
 		const syncMeta = readSyncMeta(file, plugin.app);
-		const payload = buildTaskPayload(frontmatter, file, vaultName);
+
+		// 5.1 Populate seenTaskIds for tasks found in activeTasks
+		if (syncMeta.taskId && activeTasks.has(syncMeta.taskId)) {
+			seenTaskIds.add(syncMeta.taskId);
+		}
+
+		const noteBody = await readNoteBody(file, plugin.app);
+		// If the Obsidian note has no body, preserve any body already in the remote Google Task
+		// rather than overwriting it with an empty payload.
+		const remoteForBody = syncMeta.taskId ? activeTasks.get(syncMeta.taskId) : undefined;
+		const effectiveBody = noteBody || (remoteForBody ? extractBodyFromGoogleNotes(remoteForBody.notes ?? '') : '');
+		const payload = buildTaskPayload(frontmatter, file, vaultName, effectiveBody);
 		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, payload);
 		const result: NoteResult = { file, action };
 
@@ -248,6 +269,36 @@ async function runGlobalSyncWithData(
 		processed++;
 		results.push(result);
 		modal.updateProgress(processed, file.name);
+	}
+
+	// 5.2 Compute orphan IDs: active tasks not seen during reconciliation
+	const orphanIds = [...activeTasks.keys()].filter(id => !seenTaskIds.has(id));
+
+	// 5.3 / 5.4 Import pass
+	const importSettings = plugin.settings.importFromGoogle;
+	if (importSettings.enabled) {
+		if (!importSettings.folder) {
+			// 5.4 Skip with notice if folder is empty
+			new Notice('Google Tasks Sync: Import folder not configured. Set a folder in plugin settings.');
+		} else {
+			for (const orphanId of orphanIds) {
+				const task = activeTasks.get(orphanId)!;
+				try {
+					const newFile = await createNoteFromGoogleTask(task, listName, plugin.settings, plugin.app);
+					// 7.2 Log the import
+					logger?.record({
+						timestamp: new Date().toISOString(),
+						direction: 'from-google',
+						operation: 'imported',
+						noteWikilink: newFile.basename,
+						listName,
+					});
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					new Notice(`Google Tasks Sync: Failed to import task "${task.title}": ${msg}`);
+				}
+			}
+		}
 	}
 
 	modal.showSummary(processed, results);
@@ -357,20 +408,37 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 		skip: 0,
 	};
 
+	// 6.1 Track seen IDs for orphan detection in dry-run
+	const seenTaskIds = new Set<string>();
+
 	const vaultName = plugin.app.vault.getName();
 	for (const file of files) {
 		const cache = plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter ?? {};
 		const syncMeta = readSyncMeta(file, plugin.app);
+
+		if (syncMeta.taskId && maps.activeTasks.has(syncMeta.taskId)) {
+			seenTaskIds.add(syncMeta.taskId);
+		}
+
 		const payload = buildTaskPayload(frontmatter, file, vaultName);
 		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, payload);
 		counts[action]++;
+	}
+
+	// 6.1 Compute import count if import is enabled
+	const importSettings = plugin.settings.importFromGoogle;
+	let importCount: number | null = null;
+	if (importSettings.enabled) {
+		const orphanIds = [...maps.activeTasks.keys()].filter(id => !seenTaskIds.has(id));
+		importCount = orphanIds.length;
 	}
 
 	new DryRunSummaryModal(
 		plugin.app,
 		plugin,
 		counts,
+		importCount,
 		files,
 		auth.accessToken,
 		auth.listId,

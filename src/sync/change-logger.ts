@@ -10,7 +10,7 @@ export interface FieldChange {
 export interface ChangeEntry {
 	timestamp: string;
 	direction: 'to-google' | 'from-google';
-	operation: 'created' | 'updated' | 'deleted';
+	operation: 'created' | 'updated' | 'deleted' | 'imported';
 	noteWikilink: string;
 	listName: string;
 	fieldChanges?: FieldChange[];
@@ -46,6 +46,7 @@ export function buildFieldChanges(
 function formatLabel(entry: ChangeEntry): string {
 	if (entry.operation === 'created') return '✅ Created in Google Tasks';
 	if (entry.operation === 'deleted') return '🗑️ Deleted from Google Tasks';
+	if (entry.operation === 'imported') return '⬇️ Imported from Google Tasks';
 	return entry.direction === 'to-google'
 		? '🔄 Updated in Google Tasks'
 		: '⬇️ Updated from Google Tasks';

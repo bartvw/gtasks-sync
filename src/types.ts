@@ -5,6 +5,11 @@ export interface PluginSettings {
 		enabled: boolean;
 		path: string;
 	};
+	importFromGoogle: {
+		enabled: boolean;
+		folder: string;
+		defaultStatus: string;
+	};
 }
 
 export interface GoogleTask {

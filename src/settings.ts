@@ -11,6 +11,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 		enabled: true,
 		path: 'gtasks-sync-log.md',
 	},
+	importFromGoogle: {
+		enabled: false,
+		folder: '',
+		defaultStatus: 'open',
+	},
 };
 
 export class GTasksSettingTab extends PluginSettingTab {
@@ -113,6 +118,62 @@ export class GTasksSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.changeLog.path)
 					.onChange(async value => {
 						this.plugin.settings.changeLog.path = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// --- Import from Google ---
+		containerEl.createEl('h2', { text: 'Import from Google Tasks' });
+
+		const importValidationEl = containerEl.createEl('p', {
+			text: 'Import folder is required when import is enabled.',
+			cls: 'mod-warning',
+		});
+		importValidationEl.style.display = 'none';
+
+		const updateValidation = () => {
+			const invalid = this.plugin.settings.importFromGoogle.enabled && !this.plugin.settings.importFromGoogle.folder;
+			importValidationEl.style.display = invalid ? '' : 'none';
+		};
+
+		new Setting(containerEl)
+			.setName('Enable import')
+			.setDesc('Create Obsidian notes for Google Tasks that have no matching vault note.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.importFromGoogle.enabled)
+					.onChange(async value => {
+						this.plugin.settings.importFromGoogle.enabled = value;
+						await this.plugin.saveSettings();
+						updateValidation();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Import folder')
+			.setDesc('Vault-relative path to the folder where imported notes are created.')
+			.addText(text =>
+				text
+					.setPlaceholder('Imported Tasks')
+					.setValue(this.plugin.settings.importFromGoogle.folder)
+					.onChange(async value => {
+						this.plugin.settings.importFromGoogle.folder = value;
+						await this.plugin.saveSettings();
+						updateValidation();
+					})
+			);
+
+		updateValidation();
+
+		new Setting(containerEl)
+			.setName('Default status')
+			.setDesc('The status frontmatter value written to newly imported notes.')
+			.addText(text =>
+				text
+					.setPlaceholder('open')
+					.setValue(this.plugin.settings.importFromGoogle.defaultStatus)
+					.onChange(async value => {
+						this.plugin.settings.importFromGoogle.defaultStatus = value;
 						await this.plugin.saveSettings();
 					})
 			);

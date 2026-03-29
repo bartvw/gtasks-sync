@@ -1,5 +1,13 @@
 import { App, TFile } from 'obsidian';
 
+export async function readNoteBody(file: TFile, app: App): Promise<string> {
+	const content = await app.vault.read(file);
+	if (!content.startsWith('---')) return '';
+	const closeIdx = content.indexOf('\n---', 3);
+	if (closeIdx === -1) return '';
+	return content.slice(closeIdx + 4).trim();
+}
+
 export interface SyncMeta {
 	taskId: string | null;
 	listName: string | null;

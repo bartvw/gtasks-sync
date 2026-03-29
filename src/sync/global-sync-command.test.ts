@@ -9,11 +9,13 @@ import { GoogleTask } from '../types';
 vi.mock('../google-tasks/client');
 vi.mock('../google-tasks/field-mapper');
 vi.mock('./frontmatter');
+vi.mock('./note-importer');
 
 import * as client from '../google-tasks/client';
 import * as fieldMapper from '../google-tasks/field-mapper';
 // taskMatchesPayload is auto-mocked; default is set in beforeEach
 import * as frontmatter from './frontmatter';
+import * as noteImporter from './note-importer';
 
 const mockNotice = vi.mocked(Notice);
 
@@ -24,7 +26,10 @@ function makeFile(name: string, path?: string): TFile {
 function makePlugin(options: {
 	markdownFiles?: TFile[];
 	getFrontmatter?: (file: TFile) => Record<string, unknown>;
-	settings?: Partial<{ defaultListName: string }>;
+	settings?: Partial<{
+		defaultListName: string;
+		importFromGoogle: { enabled: boolean; folder: string; defaultStatus: string };
+	}>;
 } = {}): GTasksSyncPlugin {
 	const files = options.markdownFiles ?? [];
 	const getFm = options.getFrontmatter ?? (() => ({ status: 'todo', title: 'Task' }));
@@ -40,6 +45,11 @@ function makePlugin(options: {
 			clientId: 'client-id',
 			defaultListName: options.settings?.defaultListName ?? 'My Tasks',
 			changeLog: { enabled: false, path: 'gtasks-sync-log.md' },
+			importFromGoogle: options.settings?.importFromGoogle ?? {
+				enabled: false,
+				folder: '',
+				defaultStatus: 'open',
+			},
 		},
 	} as unknown as GTasksSyncPlugin;
 }
@@ -61,6 +71,9 @@ beforeEach(() => {
 	vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
 	vi.mocked(frontmatter.writeSyncMeta).mockResolvedValue(undefined);
 	vi.mocked(frontmatter.writeStatusSyncBack).mockResolvedValue(undefined);
+	vi.mocked(frontmatter.readNoteBody).mockResolvedValue('');
+	vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
+	vi.mocked(noteImporter.createNoteFromGoogleTask).mockResolvedValue({ basename: 'Orphan Task' } as unknown as import('obsidian').TFile);
 });
 
 // ---------------------------------------------------------------------------
@@ -289,5 +302,212 @@ describe('runDryRunCommand - counts', () => {
 		expect(client.updateTask).not.toHaveBeenCalled();
 		expect(frontmatter.writeSyncMeta).not.toHaveBeenCalled();
 		expect(frontmatter.writeStatusSyncBack).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Import pass — orphan detection (8.6)
+// ---------------------------------------------------------------------------
+
+describe('runGlobalSyncCommand - import pass', () => {
+	function makeGoogleTask(id: string, status: 'needsAction' | 'completed' = 'needsAction'): GoogleTask {
+		return { id, title: 'Orphan Task', status };
+	}
+
+	it('imports orphan active tasks when import is enabled and folder is set', async () => {
+		const orphanTask = makeGoogleTask('orphan-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['orphan-id', orphanTask]]));
+		// Note has a different gtask-id so orphan-id is never "seen"
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'other-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('some-task')],
+			settings: {
+				importFromGoogle: { enabled: true, folder: 'Imported', defaultStatus: 'open' },
+			},
+		});
+
+		await runGlobalSyncCommand(plugin);
+		expect(noteImporter.createNoteFromGoogleTask).toHaveBeenCalledWith(
+			orphanTask,
+			'My Tasks',
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('does not import when import is disabled', async () => {
+		const orphanTask = makeGoogleTask('orphan-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['orphan-id', orphanTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			settings: {
+				importFromGoogle: { enabled: false, folder: 'Imported', defaultStatus: 'open' },
+			},
+		});
+
+		await runGlobalSyncCommand(plugin);
+		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
+	});
+
+	it('shows notice and skips import when folder is empty', async () => {
+		const orphanTask = makeGoogleTask('orphan-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['orphan-id', orphanTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			settings: {
+				importFromGoogle: { enabled: true, folder: '', defaultStatus: 'open' },
+			},
+		});
+
+		await runGlobalSyncCommand(plugin);
+		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
+		expect(mockNotice).toHaveBeenCalledWith(expect.stringContaining('Import folder not configured'));
+	});
+
+	it('does not import tasks already matched to vault notes', async () => {
+		const seenTask = makeGoogleTask('seen-id');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['seen-id', seenTask]]));
+		// The note has gtask-id: seen-id — it is "seen" in the reconciliation loop
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'seen-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(true);
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('seen-task')],
+			settings: {
+				importFromGoogle: { enabled: true, folder: 'Imported', defaultStatus: 'open' },
+			},
+		});
+
+		await runGlobalSyncCommand(plugin);
+		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Dry-run import count (8.7)
+// ---------------------------------------------------------------------------
+
+describe('runDryRunCommand - import count', () => {
+	function makeGoogleTask(id: string): GoogleTask {
+		return { id, title: 'Orphan Task', status: 'needsAction' };
+	}
+
+	it('includes import count in dry-run when import is enabled and orphans exist', async () => {
+		const orphan1 = makeGoogleTask('orphan-1');
+		const orphan2 = makeGoogleTask('orphan-2');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([
+			['orphan-1', orphan1],
+			['orphan-2', orphan2],
+		]));
+		// Note has no gtask-id so nothing is marked as seen
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			settings: {
+				importFromGoogle: { enabled: true, folder: 'Imported', defaultStatus: 'open' },
+			},
+		});
+
+		await runDryRunCommand(plugin);
+		// No notes should actually be created in dry-run
+		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
+	});
+
+	it('does not include import count when import is disabled', async () => {
+		const orphan = makeGoogleTask('orphan-1');
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['orphan-1', orphan]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: null, listName: null, gtaskStatus: null });
+
+		const plugin = makePlugin({
+			markdownFiles: [makeFile('task')],
+			settings: {
+				importFromGoogle: { enabled: false, folder: '', defaultStatus: 'open' },
+			},
+		});
+
+		await runDryRunCommand(plugin);
+		expect(noteImporter.createNoteFromGoogleTask).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Regression: remote body preserved when Obsidian note has no body
+// ---------------------------------------------------------------------------
+
+describe('runGlobalSyncCommand - remote notes body preservation', () => {
+	it('passes remote body to buildTaskPayload when Obsidian note has no body', async () => {
+		const remoteTask = { id: 'existing-id', title: 'Task', status: 'needsAction' as const, notes: 'user content\n\nobsidian://...' };
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', remoteTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(frontmatter.readNoteBody).mockResolvedValue('');
+		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('user content');
+
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+
+		expect(fieldMapper.buildTaskPayload).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			'user content'
+		);
+	});
+
+	it('does not update when note has no body and remote body is preserved in payload', async () => {
+		const remoteTask = { id: 'existing-id', title: 'Task', status: 'needsAction' as const, notes: 'user content\n\nobsidian://...' };
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', remoteTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(frontmatter.readNoteBody).mockResolvedValue('');
+		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('user content');
+		// Payload built with preserved body matches remote → no update needed
+		vi.mocked(fieldMapper.taskMatchesPayload).mockReturnValue(true);
+
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+
+		expect(client.updateTask).not.toHaveBeenCalled();
+	});
+
+	it('uses the Obsidian note body when present, ignoring remote body', async () => {
+		const remoteTask = { id: 'existing-id', title: 'Task', status: 'needsAction' as const, notes: 'old remote content\n\nobsidian://...' };
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', remoteTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(frontmatter.readNoteBody).mockResolvedValue('local note body');
+
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+
+		expect(fieldMapper.buildTaskPayload).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			'local note body'
+		);
+		// extractBodyFromGoogleNotes should not be called when note has its own body
+		expect(fieldMapper.extractBodyFromGoogleNotes).not.toHaveBeenCalled();
+	});
+
+	it('passes empty body when note has no body and remote task has no notes', async () => {
+		const remoteTask = { id: 'existing-id', title: 'Task', status: 'needsAction' as const };
+		vi.mocked(client.fetchAllTasks).mockResolvedValue(new Map([['existing-id', remoteTask]]));
+		vi.mocked(frontmatter.readSyncMeta).mockReturnValue({ taskId: 'existing-id', listName: 'My Tasks', gtaskStatus: 'needsAction' });
+		vi.mocked(frontmatter.readNoteBody).mockResolvedValue('');
+		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
+
+		const plugin = makePlugin({ markdownFiles: [makeFile('task')] });
+		await runGlobalSyncCommand(plugin);
+
+		expect(fieldMapper.buildTaskPayload).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			''
+		);
 	});
 });

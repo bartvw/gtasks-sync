@@ -5,6 +5,7 @@ import {
 	mapDueToGoogle,
 	buildTaskPayload,
 	taskMatchesPayload,
+	extractBodyFromGoogleNotes,
 } from './field-mapper';
 import { TFile } from 'obsidian';
 
@@ -133,5 +134,66 @@ describe('taskMatchesPayload', () => {
 	it('compares only the date portion of due (ignores time)', () => {
 		const task = { id: 't1', ...base, due: '2025-06-15T12:34:56.000Z' };
 		expect(taskMatchesPayload(task, base)).toBe(true);
+	});
+
+	// 8.5: notes field is included in comparisons
+	it('returns false when notes field changes', () => {
+		const task = { id: 't1', ...base, notes: 'old body\n\nobsidian://note' };
+		expect(taskMatchesPayload(task, { ...base, notes: 'new body\n\nobsidian://note' })).toBe(false);
+	});
+
+	it('returns true when notes field matches', () => {
+		const task = { id: 't1', ...base, notes: 'body\n\nobsidian://note' };
+		expect(taskMatchesPayload(task, { ...base, notes: 'body\n\nobsidian://note' })).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extractBodyFromGoogleNotes (8.3)
+// ---------------------------------------------------------------------------
+
+describe('extractBodyFromGoogleNotes', () => {
+	it('returns empty string for empty input', () => {
+		expect(extractBodyFromGoogleNotes('')).toBe('');
+	});
+
+	it('returns empty string when notes is just an Obsidian URI', () => {
+		expect(extractBodyFromGoogleNotes('obsidian://open?vault=V&file=f.md')).toBe('');
+	});
+
+	it('strips trailing Obsidian URI and returns body', () => {
+		expect(extractBodyFromGoogleNotes('Pick up from store\n\nobsidian://open?vault=V&file=f.md')).toBe('Pick up from store');
+	});
+
+	it('returns content trimmed when no URI present', () => {
+		expect(extractBodyFromGoogleNotes('some notes without uri')).toBe('some notes without uri');
+	});
+
+	it('handles multiline body before URI', () => {
+		expect(extractBodyFromGoogleNotes('line1\nline2\n\nobsidian://open?vault=V&file=f.md')).toBe('line1\nline2');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildTaskPayload — notes field with body (8.4)
+// ---------------------------------------------------------------------------
+
+describe('buildTaskPayload - notes field with body', () => {
+	it('sets notes to body + URI when noteBody is provided', () => {
+		const file = makeFile('note', 'Tasks/note.md');
+		const payload = buildTaskPayload({ status: 'todo' }, file, 'My Vault', 'Some body text');
+		expect(payload.notes).toBe('Some body text\n\nobsidian://open?vault=My%20Vault&file=Tasks%2Fnote.md');
+	});
+
+	it('sets notes to just the URI when noteBody is empty string', () => {
+		const file = makeFile('note', 'Tasks/note.md');
+		const payload = buildTaskPayload({ status: 'todo' }, file, 'My Vault', '');
+		expect(payload.notes).toBe('obsidian://open?vault=My%20Vault&file=Tasks%2Fnote.md');
+	});
+
+	it('sets notes to just the URI when noteBody is omitted', () => {
+		const file = makeFile('note', 'Tasks/note.md');
+		const payload = buildTaskPayload({ status: 'todo' }, file, 'My Vault');
+		expect(payload.notes).toBe('obsidian://open?vault=My%20Vault&file=Tasks%2Fnote.md');
 	});
 });

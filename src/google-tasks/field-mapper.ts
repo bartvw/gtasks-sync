@@ -1,6 +1,18 @@
 import { TFile } from 'obsidian';
 import { GoogleTask } from '../types';
 
+export function extractBodyFromGoogleNotes(notes: string): string {
+	if (!notes) return '';
+	const sepIdx = notes.indexOf('\n\nobsidian://');
+	if (sepIdx !== -1) {
+		return notes.slice(0, sepIdx).trim();
+	}
+	if (notes.startsWith('obsidian://')) {
+		return '';
+	}
+	return notes.trim();
+}
+
 export function taskMatchesPayload(task: GoogleTask, payload: Omit<GoogleTask, 'id'>): boolean {
 	if (task.title !== payload.title) return false;
 	if (task.status !== payload.status) return false;
@@ -27,7 +39,8 @@ export function mapDueToGoogle(due: string | undefined): string | undefined {
 export function buildTaskPayload(
 	frontmatter: Record<string, unknown>,
 	file: TFile,
-	vaultName: string
+	vaultName: string,
+	noteBody?: string
 ): Omit<GoogleTask, 'id'> {
 	const title = typeof frontmatter['title'] === 'string'
 		? frontmatter['title']
@@ -41,7 +54,8 @@ export function buildTaskPayload(
 		typeof frontmatter['due'] === 'string' ? frontmatter['due'] : undefined
 	);
 
-	const notes = buildObsidianUri(vaultName, file.path);
+	const uri = buildObsidianUri(vaultName, file.path);
+	const notes = noteBody ? `${noteBody}\n\n${uri}` : uri;
 
 	const payload: Omit<GoogleTask, 'id'> = { title, status, notes };
 	if (due) payload.due = due;
