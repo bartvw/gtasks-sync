@@ -10,7 +10,7 @@ export interface SyncMeta {
 
 export function readSyncMeta(file: TFile, app: App): SyncMeta {
 	const cache = app.metadataCache.getFileCache(file);
-	const fm = cache?.frontmatter ?? {};
+	const fm = (cache?.frontmatter ?? {}) as Record<string, unknown>;
 	const rawStatus = fm['gtask-status'];
 	return {
 		taskId: typeof fm['gtask-id'] === 'string' ? fm['gtask-id'] : null,
@@ -30,7 +30,7 @@ export async function writeSyncMeta(
 	gtaskTitle: string,
 	gtaskDue: string | null
 ): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		fm['gtask-id'] = taskId;
 		fm['gtask-list'] = listName;
 		fm['gtask-status'] = gtaskStatus;
@@ -42,34 +42,34 @@ export async function writeSyncMeta(
 }
 
 export async function writeStatusSyncBack(file: TFile, app: App): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		fm['status'] = 'done';
 		fm['gtask-status'] = 'completed';
 	});
 }
 
 export async function writeStatusUndone(file: TFile, app: App): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		fm['status'] = 'open';
 		fm['gtask-status'] = 'needsAction';
 	});
 }
 
 export async function writeGtaskStatusOnly(file: TFile, app: App, gtaskStatus: 'needsAction' | 'completed'): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		fm['gtask-status'] = gtaskStatus;
 	});
 }
 
 export async function writeTitleSyncBack(file: TFile, app: App, title: string): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		fm['title'] = title;
 		fm['gtask-title'] = title;
 	});
 }
 
 export async function writeDueSyncBack(file: TFile, app: App, due: string | null): Promise<void> {
-	await app.fileManager.processFrontMatter(file, fm => {
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 		if (due != null) {
 			fm['due'] = due;
 			fm['gtask-due'] = due;

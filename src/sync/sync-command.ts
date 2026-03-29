@@ -84,7 +84,7 @@ export async function runSyncCommand(plugin: GTasksSyncPlugin): Promise<void> {
 				const oldListId = await resolveListId(accessToken, syncMeta.listName);
 				await deleteTask(accessToken, oldListId, syncMeta.taskId);
 			} catch {
-				new Notice('Warning: Task moved to new list, but old task could not be deleted.');
+				new Notice('Warning: task moved to new list, but old task could not be deleted.');
 				return;
 			}
 

@@ -10,6 +10,11 @@ const TEST_GLOBS = [
 	"vitest.config.ts",
 ];
 
+const NODE_GLOBS = [
+	"src/integration/*.ts",
+	"vitest.config.ts",
+];
+
 export default tseslint.config(
 	{
 		languageOptions: {
@@ -29,16 +34,48 @@ export default tseslint.config(
 	{
 		plugins: { obsidianmd },
 		rules: {
-			"obsidianmd/ui/sentence-case": ["error", { brands: ["Google Tasks"] }],
+			"obsidianmd/ui/sentence-case": ["error", {
+				brands: ["Google", "Google Cloud", "Google Tasks", "Google Tasks Sync", "My Tasks", "OAuth", "Obsidian"],
+				acronyms: ["ID", "OS", "URL", "API"],
+			}],
 		},
 	},
+	{
+		// typescript-eslint plugin is already declared in the recommended config objects above,
+		// but flat config requires re-declaring it in each config object that uses its rules.
+		plugins: { "@typescript-eslint": tseslint.plugin },
+		rules: {
+			"@typescript-eslint/no-unused-vars": ["warn", {
+				vars: "all",
+				args: "none",
+				ignoreRestSiblings: true,
+				varsIgnorePattern: "^_",
+				argsIgnorePattern: "^_",
+			}],
+		},
+	},
+	// Test files: disable rules that don't apply in test/mock context
 	{
 		files: TEST_GLOBS,
 		rules: {
 			"obsidianmd/ui/sentence-case": "off",
 			"obsidianmd/settings-tab/no-manual-html-headings": "off",
 			"obsidianmd/no-static-styles-assignment": "off",
+			"obsidianmd/no-tfile-tfolder-cast": "off",
 			"no-restricted-globals": "off",
+			"@typescript-eslint/no-unsafe-assignment": "off",
+			"@typescript-eslint/no-unsafe-member-access": "off",
+			"@typescript-eslint/no-unsafe-call": "off",
+			"@typescript-eslint/no-unnecessary-type-assertion": "off",
+		},
+	},
+	// Node.js globals for integration tests and vitest config
+	{
+		files: NODE_GLOBS,
+		languageOptions: {
+			globals: {
+				...globals.node,
+			},
 		},
 	},
 	globalIgnores([

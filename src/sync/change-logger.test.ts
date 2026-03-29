@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ChangeLogger, ChangeEntry } from './change-logger';
 import { App } from 'obsidian';
 

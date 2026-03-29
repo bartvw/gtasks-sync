@@ -13,7 +13,7 @@ export default class GTasksSyncPlugin extends Plugin {
 		// Warn if SecretStorage is unavailable
 		if (!this.app.secretStorage) {
 			new Notice(
-				'Google Tasks Sync: Secure storage is unavailable on this system. OAuth credentials cannot be stored.'
+				'Secure storage is unavailable — OAuth credentials for Google Tasks Sync cannot be stored.'
 			);
 		}
 
@@ -26,7 +26,7 @@ export default class GTasksSyncPlugin extends Plugin {
 				if (!view?.file) return false;
 
 				const cache = this.app.metadataCache.getFileCache(view.file);
-				const tags = getAllTags(cache) ?? [];
+				const tags = cache ? (getAllTags(cache) ?? []) : [];
 				if (!tags.includes('#task')) return false;
 
 				if (!checking) {
@@ -42,7 +42,7 @@ export default class GTasksSyncPlugin extends Plugin {
 		// Register the global sync command
 		this.addCommand({
 			id: 'global-sync',
-			name: 'Global Sync to Google Tasks',
+			name: 'Global sync to Google Tasks',
 			callback: () => {
 				runGlobalSyncCommand(this).catch(err => {
 					const msg = err instanceof Error ? err.message : String(err);
@@ -54,7 +54,7 @@ export default class GTasksSyncPlugin extends Plugin {
 		// Register the dry-run global sync command
 		this.addCommand({
 			id: 'dry-run-global-sync',
-			name: 'Dry Run: Global Sync to Google Tasks',
+			name: 'Dry run: global sync to Google Tasks',
 			callback: () => {
 				runDryRunCommand(this).catch(err => {
 					const msg = err instanceof Error ? err.message : String(err);

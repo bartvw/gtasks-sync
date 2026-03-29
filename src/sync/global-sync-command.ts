@@ -90,10 +90,10 @@ class SyncProgressModal extends Modal {
 		const failures = results.filter(r => r.error);
 
 		if (failures.length === 0) {
-			contentEl.createEl('h2', { text: 'Sync Complete' });
+			contentEl.createEl('h2', { text: 'Sync complete' });
 			contentEl.createEl('p', { text: `Successfully processed ${processed} notes.` });
 		} else {
-			contentEl.createEl('h2', { text: 'Sync Complete with Errors' });
+			contentEl.createEl('h2', { text: 'Sync complete with errors' });
 			contentEl.createEl('p', { text: `${failures.length} note(s) failed:` });
 			const list = contentEl.createEl('ul');
 			for (const r of failures) {
@@ -147,7 +147,7 @@ class DryRunSummaryModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Dry Run: Global Sync' });
+		contentEl.createEl('h2', { text: 'Dry run: global sync' });
 
 		const table = contentEl.createEl('table');
 		const rows: [string, number][] = [
@@ -169,10 +169,10 @@ class DryRunSummaryModal extends Modal {
 		}
 
 		const runBtn = contentEl.createEl('button', { text: 'Run sync' });
-		runBtn.style.marginTop = '16px';
+		runBtn.addClass('gtasks-dry-run-btn');
 		runBtn.addEventListener('click', () => {
 			this.close();
-			runGlobalSyncWithData(
+			void runGlobalSyncWithData(
 				this.plugin,
 				this.accessToken,
 				this.listId,
@@ -362,7 +362,7 @@ async function runGlobalSyncWithData(
 	const importSettings = plugin.settings.importFromGoogle;
 	if (importSettings.enabled) {
 		if (!importSettings.folder) {
-			new Notice('Google Tasks Sync: Import folder not configured. Set a folder in plugin settings.');
+			new Notice('Google Tasks Sync: import folder not configured. Set a folder in plugin settings.');
 		} else {
 			for (const orphanId of orphanIds) {
 				const task = activeTasks.get(orphanId)!;

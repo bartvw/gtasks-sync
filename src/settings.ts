@@ -34,22 +34,22 @@ export class GTasksSettingTab extends PluginSettingTab {
 		const secretStorageAvailable = this.app.secretStorage != null;
 
 		if (!secretStorageAvailable) {
-			new Notice('Google Tasks Sync: Secure storage is unavailable on this system. Cannot store credentials.');
+			new Notice('Google Tasks Sync: secure storage is unavailable on this system. Cannot store credentials.');
 			containerEl.createEl('p', {
-				text: 'Warning: Secure storage is unavailable on this system. Credentials cannot be stored safely.',
+				text: 'Warning: secure storage is unavailable on this system. Credentials cannot be stored safely.',
 				cls: 'mod-warning',
 			});
 		}
 
 		// --- Google Credentials ---
-		containerEl.createEl('h2', { text: 'Google Credentials' });
+		new Setting(containerEl).setName('Google credentials').setHeading();
 
 		new Setting(containerEl)
 			.setName('Client ID')
-			.setDesc('OAuth 2.0 Client ID from your Google Cloud project.')
+			.setDesc('The OAuth 2.0 client ID from your Google Cloud project.')
 			.addText(text =>
 				text
-					.setPlaceholder('Enter your Client ID')
+					.setPlaceholder('Enter your client ID')
 					.setValue(this.plugin.settings.clientId)
 					.onChange(async value => {
 						this.plugin.settings.clientId = value;
@@ -59,16 +59,16 @@ export class GTasksSettingTab extends PluginSettingTab {
 
 		// Client Secret: stored in secretStorage, displayed as a password field
 		const secretSetting = new Setting(containerEl)
-			.setName('Client Secret')
-			.setDesc('OAuth 2.0 Client Secret (stored securely in OS keychain).');
+			.setName('Client secret')
+			.setDesc('OAuth 2.0 client secret (stored securely in OS keychain).');
 
 		secretSetting.addText(text => {
 			text.inputEl.type = 'password';
-			text.setPlaceholder('Enter your Client Secret');
+			text.setPlaceholder('Enter your client secret');
 			text.setDisabled(!secretStorageAvailable);
 
 			if (secretStorageAvailable) {
-				Promise.resolve(this.app.secretStorage.getSecret('gtasks-client-secret')).then(val => {
+				void Promise.resolve(this.app.secretStorage.getSecret('gtasks-client-secret')).then(val => {
 					if (val) text.setValue(val);
 				});
 			}
@@ -80,7 +80,7 @@ export class GTasksSettingTab extends PluginSettingTab {
 		});
 
 		// --- Google Tasks list ---
-		containerEl.createEl('h2', { text: 'Google Tasks List' });
+		new Setting(containerEl).setName('Google Tasks list').setHeading();
 
 		new Setting(containerEl)
 			.setName('Default list name')
@@ -110,8 +110,8 @@ export class GTasksSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// --- Change Log ---
-		containerEl.createEl('h2', { text: 'Change Log' });
+		// --- Change log ---
+		new Setting(containerEl).setName('Change log').setHeading();
 
 		new Setting(containerEl)
 			.setName('Enable change log')
@@ -127,9 +127,10 @@ export class GTasksSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Log file path')
-			.setDesc('Vault-relative path for the change log file (e.g. gtasks-sync-log.md).')
+			.setDesc('Path to the change log file in your vault, for example gtasks-sync-log.md.')
 			.addText(text =>
 				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					.setPlaceholder('gtasks-sync-log.md')
 					.setValue(this.plugin.settings.changeLog.path)
 					.onChange(async value => {
@@ -138,18 +139,17 @@ export class GTasksSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// --- Import from Google ---
-		containerEl.createEl('h2', { text: 'Import from Google Tasks' });
+		// --- Import from Google Tasks ---
+		new Setting(containerEl).setName('Import from Google Tasks').setHeading();
 
 		const importValidationEl = containerEl.createEl('p', {
 			text: 'Import folder is required when import is enabled.',
-			cls: 'mod-warning',
+			cls: 'mod-warning gtasks-validation-hidden',
 		});
-		importValidationEl.style.display = 'none';
 
 		const updateValidation = () => {
 			const invalid = this.plugin.settings.importFromGoogle.enabled && !this.plugin.settings.importFromGoogle.folder;
-			importValidationEl.style.display = invalid ? '' : 'none';
+			importValidationEl.toggleClass('gtasks-validation-hidden', !invalid);
 		};
 
 		new Setting(containerEl)
@@ -167,10 +167,10 @@ export class GTasksSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Import folder')
-			.setDesc('Vault-relative path to the folder where imported notes are created.')
+			.setDesc('Path to the folder where imported notes are created.')
 			.addText(text =>
 				text
-					.setPlaceholder('Imported Tasks')
+					.setPlaceholder('Imported tasks')
 					.setValue(this.plugin.settings.importFromGoogle.folder)
 					.onChange(async value => {
 						this.plugin.settings.importFromGoogle.folder = value;
@@ -186,6 +186,7 @@ export class GTasksSettingTab extends PluginSettingTab {
 			.setDesc('The status frontmatter value written to newly imported notes.')
 			.addText(text =>
 				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					.setPlaceholder('open')
 					.setValue(this.plugin.settings.importFromGoogle.defaultStatus)
 					.onChange(async value => {
@@ -195,24 +196,24 @@ export class GTasksSettingTab extends PluginSettingTab {
 			);
 
 		// --- Connection status ---
-		containerEl.createEl('h2', { text: 'Connection' });
+		new Setting(containerEl).setName('Connection').setHeading();
 
 		this.renderConnectionStatus(containerEl, secretStorageAvailable);
 	}
 
 	private renderConnectionStatus(containerEl: HTMLElement, secretStorageAvailable: boolean): void {
-		loadTokens(this.app).then(tokens => {
+		void loadTokens(this.app).then(tokens => {
 			const connected = tokens != null;
 			const statusEl = containerEl.createEl('p', {
-				text: connected ? 'Status: Connected to Google' : 'Status: Not connected',
+				text: connected ? 'Status: connected to Google' : 'Status: not connected',
 			});
-			statusEl.style.fontWeight = 'bold';
+			statusEl.addClass('gtasks-connection-status');
 
 			new Setting(containerEl)
-				.setName('Google Account')
+				.setName('Google account')
 				.addButton(button => {
 					button
-						.setButtonText('Connect Google Account')
+						.setButtonText('Connect Google account')
 						.setDisabled(!secretStorageAvailable || connected)
 						.onClick(async () => {
 							await this.startOAuthFlow();
@@ -237,7 +238,7 @@ export class GTasksSettingTab extends PluginSettingTab {
 		const clientSecret = await Promise.resolve(this.app.secretStorage.getSecret('gtasks-client-secret'));
 
 		if (!clientId || !clientSecret) {
-			new Notice('Please enter your Client ID and Client Secret first.');
+			new Notice('Please enter your client ID and client secret first.');
 			return;
 		}
 

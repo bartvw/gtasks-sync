@@ -2,7 +2,7 @@ import { App, TFile } from 'obsidian';
 import { GoogleTask, PluginSettings } from '../types';
 
 export function sanitizeFilename(title: string): string {
-	const sanitized = title.replace(/[\/:\*\?"<>\|\\]/g, '').trim();
+	const sanitized = title.replace(/[/:*?"<>|\\]/g, '').trim();
 	return sanitized || 'untitled';
 }
 

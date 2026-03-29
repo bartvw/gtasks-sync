@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { requestUrl } from 'obsidian';
 import { TokenData } from '../types';
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -90,18 +91,19 @@ export async function exchangeCodeForTokens(
 		grant_type: 'authorization_code',
 	});
 
-	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+	const response = await requestUrl({
+		url: GOOGLE_TOKEN_ENDPOINT,
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: body.toString(),
+		throw: false,
 	});
 
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(`Token exchange failed: ${response.status} ${text}`);
+	if (response.status >= 400) {
+		throw new Error(`Token exchange failed: ${response.status} ${response.text}`);
 	}
 
-	const data = await response.json() as TokenResponse;
+	const data = response.json as TokenResponse;
 	if (!data.refresh_token) {
 		throw new Error('No refresh token returned. Ensure you requested offline access.');
 	}
@@ -125,18 +127,19 @@ export async function refreshAccessToken(
 		grant_type: 'refresh_token',
 	});
 
-	const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+	const response = await requestUrl({
+		url: GOOGLE_TOKEN_ENDPOINT,
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: body.toString(),
+		throw: false,
 	});
 
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(`Token refresh failed: ${response.status} ${text}`);
+	if (response.status >= 400) {
+		throw new Error(`Token refresh failed: ${response.status} ${response.text}`);
 	}
 
-	const data = await response.json() as TokenResponse;
+	const data = response.json as TokenResponse;
 	return {
 		accessToken: data.access_token,
 		refreshToken,

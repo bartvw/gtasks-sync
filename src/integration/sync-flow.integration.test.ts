@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { refreshAccessToken } from '../auth/oauth';
-import { resolveListId, listTasklists, deleteTask } from '../google-tasks/client';
+import { resolveListId, deleteTask } from '../google-tasks/client';
 import { buildTaskPayload } from '../google-tasks/field-mapper';
 import { createTask, updateTask } from '../google-tasks/client';
 import { TFile } from 'obsidian';
@@ -56,7 +56,7 @@ describe.skipIf(SKIP)('Full sync flow (live)', () => {
 		const file = { basename: 'integration-test-note', path: 'integration-test-note.md' } as unknown as TFile;
 		const frontmatter = { status: 'todo', title: '[gtasks-sync] integration test note', due: '2099-01-01' };
 
-		const payload = buildTaskPayload(frontmatter, file, 'TestVault');
+		const payload = buildTaskPayload(frontmatter, file);
 		const created = await createTask(accessToken, listId, payload);
 		expect(created.id).toBeTruthy();
 		createdTaskId = created.id;

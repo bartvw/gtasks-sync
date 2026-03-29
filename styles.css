@@ -6,3 +6,15 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+.gtasks-dry-run-btn {
+    margin-top: 16px;
+}
+
+.gtasks-validation-hidden {
+    display: none;
+}
+
+.gtasks-connection-status {
+    font-weight: bold;
+}

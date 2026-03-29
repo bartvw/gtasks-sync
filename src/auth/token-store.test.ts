@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { saveTokens, loadTokens, clearTokens } from './token-store';
 import { TokenData } from '../types';
 import { App } from 'obsidian';

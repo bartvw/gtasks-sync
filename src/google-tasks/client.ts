@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, requestUrl } from 'obsidian';
 import { PluginSettings, GoogleTask, TokenData } from '../types';
 import { loadTokens, saveTokens } from '../auth/token-store';
 import { refreshAccessToken } from '../auth/oauth';
@@ -47,33 +47,34 @@ async function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function apiFetch<T>(url: string, accessToken: string, options?: RequestInit, attempt = 0): Promise<T> {
-	const response = await fetch(url, {
-		...options,
+async function apiFetch<T>(url: string, accessToken: string, options?: { method?: string; body?: string }, attempt = 0): Promise<T> {
+	const response = await requestUrl({
+		url,
+		method: options?.method,
+		body: options?.body,
 		headers: {
 			Authorization: `Bearer ${accessToken}`,
 			'Content-Type': 'application/json',
-			...(options?.headers ?? {}),
 		},
+		throw: false,
 	});
 
 	if (response.status === 429) {
-		const retryAfter = response.headers.get('Retry-After');
+		const retryAfter = response.headers['retry-after'];
 		const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : Math.pow(2, attempt) * 1000;
 		await sleep(waitMs);
 		return apiFetch<T>(url, accessToken, options, attempt + 1);
 	}
 
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(`Google Tasks API error ${response.status}: ${text}`);
+	if (response.status < 200 || response.status >= 300) {
+		throw new Error(`Google Tasks API error ${response.status}: ${response.text}`);
 	}
 
 	if (response.status === 204) {
 		return undefined as unknown as T;
 	}
 
-	return response.json() as Promise<T>;
+	return response.json as T;
 }
 
 export async function listTasklists(accessToken: string): Promise<TaskList[]> {
