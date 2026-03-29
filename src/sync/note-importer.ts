@@ -1,6 +1,5 @@
 import { App, TFile } from 'obsidian';
 import { GoogleTask, PluginSettings } from '../types';
-import { extractBodyFromGoogleNotes } from '../google-tasks/field-mapper';
 
 export function sanitizeFilename(title: string): string {
 	const sanitized = title.replace(/[\/:\*\?"<>\|\\]/g, '').trim();
@@ -30,13 +29,18 @@ function buildFrontmatter(task: GoogleTask, listName: string, defaultStatus: str
 	const lines = ['---', 'tags:\n  - task'];
 	const escapedTitle = task.title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 	lines.push(`title: "${escapedTitle}"`);
-	if (task.due) {
-		lines.push(`due: ${task.due.slice(0, 10)}`);
+	const dueDate = task.due ? task.due.slice(0, 10) : null;
+	if (dueDate) {
+		lines.push(`due: ${dueDate}`);
 	}
 	lines.push(`status: ${defaultStatus}`);
 	lines.push(`gtask-id: ${task.id}`);
 	lines.push(`gtask-list: ${listName}`);
 	lines.push('gtask-status: needsAction');
+	lines.push(`gtask-title: "${escapedTitle}"`);
+	if (dueDate) {
+		lines.push(`gtask-due: ${dueDate}`);
+	}
 	lines.push('---');
 	return lines.join('\n');
 }
@@ -55,8 +59,6 @@ export async function createNoteFromGoogleTask(
 	const filePath = findUniqueFilePath(folder, sanitized, app);
 
 	const frontmatter = buildFrontmatter(task, listName, defaultStatus);
-	const body = extractBodyFromGoogleNotes(task.notes ?? '');
-	const content = body ? `${frontmatter}\n\n${body}` : frontmatter;
 
-	return await app.vault.create(filePath, content);
+	return await app.vault.create(filePath, frontmatter);
 }

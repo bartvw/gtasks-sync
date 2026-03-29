@@ -1,17 +1,11 @@
 import { App, TFile } from 'obsidian';
 
-export async function readNoteBody(file: TFile, app: App): Promise<string> {
-	const content = await app.vault.read(file);
-	if (!content.startsWith('---')) return '';
-	const closeIdx = content.indexOf('\n---', 3);
-	if (closeIdx === -1) return '';
-	return content.slice(closeIdx + 4).trim();
-}
-
 export interface SyncMeta {
 	taskId: string | null;
 	listName: string | null;
 	gtaskStatus: 'needsAction' | 'completed' | null;
+	gtaskTitle: string | null;
+	gtaskDue: string | null;
 }
 
 export function readSyncMeta(file: TFile, app: App): SyncMeta {
@@ -22,6 +16,8 @@ export function readSyncMeta(file: TFile, app: App): SyncMeta {
 		taskId: typeof fm['gtask-id'] === 'string' ? fm['gtask-id'] : null,
 		listName: typeof fm['gtask-list'] === 'string' ? fm['gtask-list'] : null,
 		gtaskStatus: rawStatus === 'needsAction' || rawStatus === 'completed' ? rawStatus : null,
+		gtaskTitle: typeof fm['gtask-title'] === 'string' ? fm['gtask-title'] : null,
+		gtaskDue: typeof fm['gtask-due'] === 'string' ? fm['gtask-due'] : null,
 	};
 }
 
@@ -30,12 +26,18 @@ export async function writeSyncMeta(
 	app: App,
 	taskId: string,
 	listName: string,
-	gtaskStatus: 'needsAction' | 'completed'
+	gtaskStatus: 'needsAction' | 'completed',
+	gtaskTitle: string,
+	gtaskDue: string | null
 ): Promise<void> {
 	await app.fileManager.processFrontMatter(file, fm => {
 		fm['gtask-id'] = taskId;
 		fm['gtask-list'] = listName;
 		fm['gtask-status'] = gtaskStatus;
+		fm['gtask-title'] = gtaskTitle;
+		if (gtaskDue != null) {
+			fm['gtask-due'] = gtaskDue;
+		}
 	});
 }
 
@@ -56,5 +58,24 @@ export async function writeStatusUndone(file: TFile, app: App): Promise<void> {
 export async function writeGtaskStatusOnly(file: TFile, app: App, gtaskStatus: 'needsAction' | 'completed'): Promise<void> {
 	await app.fileManager.processFrontMatter(file, fm => {
 		fm['gtask-status'] = gtaskStatus;
+	});
+}
+
+export async function writeTitleSyncBack(file: TFile, app: App, title: string): Promise<void> {
+	await app.fileManager.processFrontMatter(file, fm => {
+		fm['title'] = title;
+		fm['gtask-title'] = title;
+	});
+}
+
+export async function writeDueSyncBack(file: TFile, app: App, due: string | null): Promise<void> {
+	await app.fileManager.processFrontMatter(file, fm => {
+		if (due != null) {
+			fm['due'] = due;
+			fm['gtask-due'] = due;
+		} else {
+			delete fm['due'];
+			delete fm['gtask-due'];
+		}
 	});
 }

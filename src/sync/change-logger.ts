@@ -17,8 +17,8 @@ export interface ChangeEntry {
 }
 
 export function buildFieldChanges(
-	before: Pick<GoogleTask, 'title' | 'due' | 'status' | 'notes'>,
-	after: Pick<GoogleTask, 'title' | 'due' | 'status' | 'notes'>
+	before: Pick<GoogleTask, 'title' | 'due' | 'status'>,
+	after: Pick<GoogleTask, 'title' | 'due' | 'status'>
 ): FieldChange[] {
 	const changes: FieldChange[] = [];
 
@@ -34,10 +34,6 @@ export function buildFieldChanges(
 
 	if (before.status !== after.status) {
 		changes.push({ field: 'status', oldValue: before.status, newValue: after.status });
-	}
-
-	if (before.notes !== after.notes) {
-		changes.push({ field: 'notes', oldValue: '', newValue: '' });
 	}
 
 	return changes;

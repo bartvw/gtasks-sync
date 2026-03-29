@@ -7,6 +7,7 @@ import GTasksSyncPlugin from './main';
 export const DEFAULT_SETTINGS: PluginSettings = {
 	clientId: '',
 	defaultListName: '',
+	conflictResolution: 'google-wins',
 	changeLog: {
 		enabled: true,
 		path: 'gtasks-sync-log.md',
@@ -90,6 +91,21 @@ export class GTasksSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.defaultListName)
 					.onChange(async value => {
 						this.plugin.settings.defaultListName = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// --- Conflict resolution ---
+		new Setting(containerEl)
+			.setName('Conflict resolution')
+			.setDesc('When both local and Google changed a field between syncs, which value wins?')
+			.addDropdown(drop =>
+				drop
+					.addOption('google-wins', 'Google wins')
+					.addOption('local-wins', 'Local wins')
+					.setValue(this.plugin.settings.conflictResolution)
+					.onChange(async (value: string) => {
+						this.plugin.settings.conflictResolution = value as 'google-wins' | 'local-wins';
 						await this.plugin.saveSettings();
 					})
 			);

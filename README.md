@@ -57,18 +57,18 @@ Global Sync reconciles each `#task` note against Google Tasks using a simple set
 
 ### Decision table
 
-| Note state | Google state | Last synced as (`gtask-status`) | Action |
-|---|---|---|---|
-| No `gtask-id`, active | — | — | **Create** new task in Google |
-| No `gtask-id`, done/cancelled | — | — | Skip |
-| `gtask-id` in active map | active | `needsAction` (or no prior sync) | **Update** Google if payload changed, otherwise skip |
-| `gtask-id` in active map | active | `completed` (Google un-completed it) | Note still done → **mark note undone** (`status: open`) |
-| `gtask-id` in active map | active | `completed` (Google un-completed it) | Note already active → **sync meta** (update `gtask-status` only) |
-| `gtask-id` in completed map | completed | `needsAction` (both just completed) | **Sync meta** (update `gtask-status` only) |
-| `gtask-id` in completed map | completed | `completed` (or no prior sync) | Note still active → **mark note done** (`status: done`) |
-| `gtask-id` in completed map | completed | any | Note already done → Skip |
-| `gtask-id` not found, active | deleted | — | **Recreate** task in Google |
-| `gtask-id` not found, done/cancelled | deleted | — | Skip |
+| Note state                           | Google state | Last synced as (`gtask-status`)      | Action                                                           |
+| ------------------------------------ | ------------ | ------------------------------------ | ---------------------------------------------------------------- |
+| No `gtask-id`, active                | —            | —                                    | **Create** new task in Google                                    |
+| No `gtask-id`, done/cancelled        | —            | —                                    | Skip                                                             |
+| `gtask-id` in active map             | active       | `needsAction` (or no prior sync)     | **Update** Google if payload changed, otherwise skip             |
+| `gtask-id` in active map             | active       | `completed` (Google un-completed it) | Note still done → **mark note undone** (`status: open`)          |
+| `gtask-id` in active map             | active       | `completed` (Google un-completed it) | Note already active → **sync meta** (update `gtask-status` only) |
+| `gtask-id` in completed map          | completed    | `needsAction` (both just completed)  | **Sync meta** (update `gtask-status` only)                       |
+| `gtask-id` in completed map          | completed    | `completed` (or no prior sync)       | Note still active → **mark note done** (`status: done`)          |
+| `gtask-id` in completed map          | completed    | any                                  | Note already done → Skip                                         |
+| `gtask-id` not found, active         | deleted      | —                                    | **Recreate** task in Google                                      |
+| `gtask-id` not found, done/cancelled | deleted      | —                                    | Skip                                                             |
 
 ### Key concepts
 

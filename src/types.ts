@@ -1,6 +1,7 @@
 export interface PluginSettings {
 	clientId: string;
 	defaultListName: string;
+	conflictResolution: 'google-wins' | 'local-wins';
 	changeLog: {
 		enabled: boolean;
 		path: string;

@@ -1,23 +1,4 @@
-# Capability: task-push
-
-## Purpose
-
-Handles pushing a TaskNotes note to Google Tasks, including field mapping, create/update logic, and user notifications.
-
-## Requirements
-
-### Requirement: User can push the current note to Google Tasks
-The plugin SHALL register a command "Sync current note to Google Tasks" in the command palette. The command SHALL only be available when the active file is a markdown note tagged with `#task`.
-
-#### Scenario: Command is available on a task note
-- **WHEN** a markdown file with a `#task` tag is the active file
-- **THEN** the command "Sync current note to Google Tasks" is available in the command palette
-
-#### Scenario: Command is not available on a non-task note
-- **WHEN** the active file has no `#task` tag, or no file is open
-- **THEN** the command "Sync current note to Google Tasks" is not available in the command palette
-
----
+## MODIFIED Requirements
 
 ### Requirement: Plugin maps TaskNotes frontmatter to Google Tasks fields
 When syncing, the plugin SHALL construct a Google Tasks task body using the following field mapping:
@@ -55,19 +36,6 @@ On an **update**, `title` and `due` are resolved per field using sentinel compar
 #### Scenario: Note has no due date
 - **WHEN** syncing a note without a `due` frontmatter field
 - **THEN** the Google Tasks payload omits the `due` field
-
----
-
-### Requirement: Plugin creates a new Google Task on first push
-If the note has no `gtask-id` frontmatter field, the plugin SHALL create a new task in the configured default Google Tasks list and write the returned task ID and list name back to the note's frontmatter as `gtask-id` and `gtask-list`.
-
-#### Scenario: First push succeeds
-- **WHEN** syncing a note with no `gtask-id` frontmatter field
-- **THEN** a new task is created in the configured list, and `gtask-id` and `gtask-list` are written to the note's frontmatter
-
-#### Scenario: First push fails due to API error
-- **WHEN** the Google Tasks API returns an error during task creation
-- **THEN** the plugin displays an error notice, and the note's frontmatter is not modified
 
 ---
 
@@ -113,15 +81,8 @@ After every successful create, update, or recreate, the plugin SHALL write the r
 - **WHEN** a task is successfully created or updated in Google Tasks with status `completed`
 - **THEN** `gtask-status: completed`, `gtask-title`, and `gtask-due` are written to the note's frontmatter
 
----
+## REMOVED Requirements
 
-### Requirement: Plugin notifies the user of sync outcome
-After every sync attempt the plugin SHALL display an Obsidian notice indicating success or failure.
-
-#### Scenario: Sync succeeds
-- **WHEN** a task is successfully created or updated in Google Tasks
-- **THEN** the plugin displays a success notice
-
-#### Scenario: Sync fails
-- **WHEN** any step of the sync fails (authentication, API call, frontmatter write)
-- **THEN** the plugin displays an error notice describing the failure
+### Requirement: Notes field includes Obsidian URI
+**Reason**: The plugin no longer manages the Google Tasks `notes` field. Removing the URI coupling simplifies sync logic and lets users freely edit notes in Google Tasks.
+**Migration**: Existing Obsidian URIs already present in Google Tasks `notes` will not be removed automatically. Users who relied on those links should note they will no longer be maintained or updated.

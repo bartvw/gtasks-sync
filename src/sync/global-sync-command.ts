@@ -1,7 +1,7 @@
 import { App, getAllTags, Modal, Notice, TFile } from 'obsidian';
 import { getAccessToken, resolveListId, fetchAllTasks, createTask, updateTask } from '../google-tasks/client';
-import { buildTaskPayload, taskMatchesPayload, extractBodyFromGoogleNotes } from '../google-tasks/field-mapper';
-import { readSyncMeta, writeSyncMeta, writeStatusSyncBack, writeStatusUndone, writeGtaskStatusOnly, readNoteBody } from './frontmatter';
+import { buildTaskPayload, resolveField, mapStatusToGoogle, mapDueToGoogle } from '../google-tasks/field-mapper';
+import { readSyncMeta, writeSyncMeta, writeStatusSyncBack, writeStatusUndone, writeGtaskStatusOnly, writeTitleSyncBack, writeDueSyncBack } from './frontmatter';
 import { ChangeLogger, buildFieldChanges } from './change-logger';
 import { createNoteFromGoogleTask } from './note-importer';
 import { GoogleTask } from '../types';
@@ -24,7 +24,6 @@ function determineAction(
 	frontmatter: Record<string, unknown>,
 	activeTasks: Map<string, GoogleTask>,
 	completedTasks: Map<string, GoogleTask>,
-	payload: Omit<GoogleTask, 'id'>,
 	gtaskStatus: 'needsAction' | 'completed' | null
 ): ReconcileAction {
 	const noteIsActive = isActiveStatus(frontmatter['status']);
@@ -37,17 +36,15 @@ function determineAction(
 			// Google un-completed the task since last sync
 			return noteIsActive ? 'sync-meta' : 'mark-undone';
 		}
-		const remoteTask = activeTasks.get(taskId)!;
-		return taskMatchesPayload(remoteTask, payload) ? 'skip' : 'update';
+		// Per-field resolution handles skip/update in the loop itself
+		return 'update';
 	}
 	if (completedTasks.has(taskId)) {
 		if (gtaskStatus === 'needsAction' && !noteIsActive) {
-			// Both sides completed since last sync — agree, update meta only
 			return 'sync-meta';
 		}
 		return noteIsActive ? 'mark-done' : 'skip';
 	}
-	// Not found in either map — task was deleted
 	return noteIsActive ? 'recreate' : 'skip';
 }
 
@@ -192,6 +189,11 @@ class DryRunSummaryModal extends Modal {
 	}
 }
 
+/** Extract the date portion (YYYY-MM-DD) from a Google RFC 3339 due string, or null if absent. */
+function googleDueToDate(due: string | undefined): string | null {
+	return due ? due.slice(0, 10) : null;
+}
+
 async function runGlobalSyncWithData(
 	plugin: GTasksSyncPlugin,
 	accessToken: string,
@@ -205,11 +207,9 @@ async function runGlobalSyncWithData(
 	modal.open();
 
 	const logger = plugin.settings.changeLog.enabled ? new ChangeLogger() : null;
-	const vaultName = plugin.app.vault.getName();
 	const results: NoteResult[] = [];
 	let processed = 0;
 
-	// 5.1 Track seen task IDs for orphan detection
 	const seenTaskIds = new Set<string>();
 
 	for (const file of files) {
@@ -219,26 +219,23 @@ async function runGlobalSyncWithData(
 		const frontmatter = cache?.frontmatter ?? {};
 		const syncMeta = readSyncMeta(file, plugin.app);
 
-		// 5.1 Populate seenTaskIds for tasks found in activeTasks
 		if (syncMeta.taskId && activeTasks.has(syncMeta.taskId)) {
 			seenTaskIds.add(syncMeta.taskId);
 		}
 
-		const noteBody = await readNoteBody(file, plugin.app);
-		// If the Obsidian note has no body, preserve any body already in the remote Google Task
-		// rather than overwriting it with an empty payload.
-		const remoteForBody = syncMeta.taskId ? activeTasks.get(syncMeta.taskId) : undefined;
-		const effectiveBody = noteBody || (remoteForBody ? extractBodyFromGoogleNotes(remoteForBody.notes ?? '') : '');
-		const payload = buildTaskPayload(frontmatter, file, vaultName, effectiveBody);
-		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, payload, syncMeta.gtaskStatus);
+		const action = determineAction(syncMeta.taskId, frontmatter, activeTasks, completedTasks, syncMeta.gtaskStatus);
 		const result: NoteResult = { file, action };
 
 		try {
 			if (action === 'create' || action === 'recreate') {
+				const payload = buildTaskPayload(frontmatter, file);
 				const created = await createTask(accessToken, listId, payload);
 				if (!created.id) throw new Error('API did not return a task ID');
-				await writeSyncMeta(file, plugin.app, created.id, listName, created.status);
+				const gtaskTitle = typeof frontmatter['title'] === 'string' ? frontmatter['title'] : file.basename;
+				const gtaskDue = typeof frontmatter['due'] === 'string' ? frontmatter['due'] : null;
+				await writeSyncMeta(file, plugin.app, created.id, listName, created.status, gtaskTitle, gtaskDue);
 				activeTasks.set(created.id, created);
+				seenTaskIds.add(created.id);
 				logger?.record({
 					timestamp: new Date().toISOString(),
 					direction: 'to-google',
@@ -248,18 +245,73 @@ async function runGlobalSyncWithData(
 				});
 			} else if (action === 'update') {
 				const remoteTask = activeTasks.get(syncMeta.taskId!)!;
-				const fieldChanges = buildFieldChanges(remoteTask, payload);
-				const updated = await updateTask(accessToken, listId, syncMeta.taskId!, payload);
-				await writeSyncMeta(file, plugin.app, syncMeta.taskId!, listName, updated.status);
-				if (fieldChanges.length > 0) {
-					logger?.record({
-						timestamp: new Date().toISOString(),
-						direction: 'to-google',
-						operation: 'updated',
-						noteWikilink: file.basename,
-						listName,
-						fieldChanges,
-					});
+				const conflictStrategy = plugin.settings.conflictResolution;
+
+				// Per-field resolution for title and due
+				const localTitle = typeof frontmatter['title'] === 'string' ? frontmatter['title'] : file.basename;
+				const googleTitle = remoteTask.title;
+				const titleResult = resolveField(localTitle, googleTitle, syncMeta.gtaskTitle, conflictStrategy);
+
+				const localDue = typeof frontmatter['due'] === 'string' ? frontmatter['due'] : null;
+				const googleDue = googleDueToDate(remoteTask.due);
+				const dueResult = resolveField(localDue, googleDue, syncMeta.gtaskDue, conflictStrategy);
+
+				// Status comparison
+				const localStatus = mapStatusToGoogle(typeof frontmatter['status'] === 'string' ? frontmatter['status'] : '');
+				const statusChanged = localStatus !== remoteTask.status;
+
+				// Collect pull-backs
+				if (titleResult.action === 'pull') {
+					await writeTitleSyncBack(file, plugin.app, titleResult.value);
+				}
+				if (dueResult.action === 'pull') {
+					await writeDueSyncBack(file, plugin.app, dueResult.value);
+				}
+
+				// Build push payload
+				const pushPayload: { title?: string; status?: 'needsAction' | 'completed'; due?: string } = {};
+				if (titleResult.action === 'push') {
+					pushPayload.title = titleResult.value;
+				}
+				if (dueResult.action === 'push') {
+					pushPayload.due = mapDueToGoogle(dueResult.value ?? undefined) ?? undefined;
+				} else if (dueResult.action === 'pull') {
+					// due was pulled, remove from push payload (already handled)
+				}
+				if (statusChanged) {
+					pushPayload.status = localStatus;
+				}
+
+				// Skip API call if nothing to push
+				const hasPush = pushPayload.title !== undefined || pushPayload.due !== undefined || pushPayload.status !== undefined;
+				if (!hasPush) {
+					// All resolved to pull/skip; update sentinels from resolved values
+					const finalTitle = titleResult.value;
+					const finalDue = dueResult.value;
+					await writeSyncMeta(file, plugin.app, syncMeta.taskId!, listName, remoteTask.status, finalTitle, finalDue);
+				} else {
+					// Merge push payload with current remote values for full update
+					const mergedPayload = {
+						title: pushPayload.title ?? remoteTask.title,
+						status: pushPayload.status ?? remoteTask.status,
+						...(pushPayload.due !== undefined ? { due: pushPayload.due }
+							: remoteTask.due ? { due: remoteTask.due } : {}),
+					};
+					const fieldChanges = buildFieldChanges(remoteTask, mergedPayload);
+					const updated = await updateTask(accessToken, listId, syncMeta.taskId!, mergedPayload);
+					const finalTitle = pushPayload.title ?? titleResult.value;
+					const finalDue = pushPayload.due ? (updated.due ? googleDueToDate(updated.due) : null) : dueResult.value;
+					await writeSyncMeta(file, plugin.app, syncMeta.taskId!, listName, updated.status, finalTitle, finalDue);
+					if (fieldChanges.length > 0) {
+						logger?.record({
+							timestamp: new Date().toISOString(),
+							direction: 'to-google',
+							operation: 'updated',
+							noteWikilink: file.basename,
+							listName,
+							fieldChanges,
+						});
+					}
 				}
 			} else if (action === 'mark-done') {
 				await writeStatusSyncBack(file, plugin.app);
@@ -303,21 +355,19 @@ async function runGlobalSyncWithData(
 		modal.updateProgress(processed, file.name);
 	}
 
-	// 5.2 Compute orphan IDs: active tasks not seen during reconciliation
+	// Compute orphan IDs: active tasks not seen during reconciliation
 	const orphanIds = [...activeTasks.keys()].filter(id => !seenTaskIds.has(id));
 
-	// 5.3 / 5.4 Import pass
+	// Import pass
 	const importSettings = plugin.settings.importFromGoogle;
 	if (importSettings.enabled) {
 		if (!importSettings.folder) {
-			// 5.4 Skip with notice if folder is empty
 			new Notice('Google Tasks Sync: Import folder not configured. Set a folder in plugin settings.');
 		} else {
 			for (const orphanId of orphanIds) {
 				const task = activeTasks.get(orphanId)!;
 				try {
 					const newFile = await createNoteFromGoogleTask(task, listName, plugin.settings, plugin.app);
-					// 7.2 Log the import
 					logger?.record({
 						timestamp: new Date().toISOString(),
 						direction: 'from-google',
@@ -340,7 +390,7 @@ async function runGlobalSyncWithData(
 function discoverTaskNotes(plugin: GTasksSyncPlugin): TFile[] {
 	return plugin.app.vault.getMarkdownFiles().filter(file => {
 		const cache = plugin.app.metadataCache.getFileCache(file);
-		const tags = getAllTags(cache) ?? [];
+		const tags = cache ? (getAllTags(cache) ?? []) : [];
 		return tags.includes('#task');
 	});
 }
@@ -442,10 +492,8 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 		skip: 0,
 	};
 
-	// 6.1 Track seen IDs for orphan detection in dry-run
 	const seenTaskIds = new Set<string>();
 
-	const vaultName = plugin.app.vault.getName();
 	for (const file of files) {
 		const cache = plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter ?? {};
@@ -455,12 +503,10 @@ export async function runDryRunCommand(plugin: GTasksSyncPlugin): Promise<void> 
 			seenTaskIds.add(syncMeta.taskId);
 		}
 
-		const payload = buildTaskPayload(frontmatter, file, vaultName);
-		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, payload, syncMeta.gtaskStatus);
+		const action = determineAction(syncMeta.taskId, frontmatter, maps.activeTasks, maps.completedTasks, syncMeta.gtaskStatus);
 		counts[action]++;
 	}
 
-	// 6.1 Compute import count if import is enabled
 	const importSettings = plugin.settings.importFromGoogle;
 	let importCount: number | null = null;
 	if (importSettings.enabled) {

@@ -4,12 +4,9 @@ import { App, TFile } from 'obsidian';
 import { GoogleTask, PluginSettings } from '../types';
 
 vi.mock('obsidian');
-vi.mock('../google-tasks/field-mapper');
-
-import * as fieldMapper from '../google-tasks/field-mapper';
 
 // ---------------------------------------------------------------------------
-// sanitizeFilename (8.1)
+// sanitizeFilename
 // ---------------------------------------------------------------------------
 
 describe('sanitizeFilename', () => {
@@ -71,7 +68,7 @@ describe('sanitizeFilename', () => {
 });
 
 // ---------------------------------------------------------------------------
-// findUniqueFilePath (8.2)
+// findUniqueFilePath
 // ---------------------------------------------------------------------------
 
 function makeApp(existingPaths: string[] = []): App {
@@ -107,13 +104,14 @@ describe('findUniqueFilePath', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createNoteFromGoogleTask (integration of 4.3 + 4.4)
+// createNoteFromGoogleTask
 // ---------------------------------------------------------------------------
 
 function makeSettings(overrides: Partial<PluginSettings['importFromGoogle']> = {}): PluginSettings {
 	return {
 		clientId: '',
 		defaultListName: 'My Tasks',
+		conflictResolution: 'google-wins',
 		changeLog: { enabled: false, path: 'log.md' },
 		importFromGoogle: {
 			enabled: true,
@@ -135,8 +133,6 @@ function makeGoogleTask(overrides: Partial<GoogleTask> = {}): GoogleTask {
 
 describe('createNoteFromGoogleTask', () => {
 	it('creates a file at the correct path with frontmatter', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
-
 		const createdFile = { basename: 'Buy milk' } as unknown as TFile;
 		const mockCreate = vi.fn().mockResolvedValue(createdFile);
 		const app = {
@@ -159,8 +155,6 @@ describe('createNoteFromGoogleTask', () => {
 	});
 
 	it('includes due date in frontmatter when task has due', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
-
 		const mockCreate = vi.fn().mockResolvedValue({ basename: 'Task' } as unknown as TFile);
 		const app = {
 			vault: {
@@ -175,11 +169,10 @@ describe('createNoteFromGoogleTask', () => {
 
 		const content: string = mockCreate.mock.calls[0][1];
 		expect(content).toContain('due: 2025-06-15');
+		expect(content).toContain('gtask-due: 2025-06-15');
 	});
 
 	it('omits due from frontmatter when task has no due', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
-
 		const mockCreate = vi.fn().mockResolvedValue({ basename: 'Task' } as unknown as TFile);
 		const app = {
 			vault: {
@@ -194,11 +187,10 @@ describe('createNoteFromGoogleTask', () => {
 
 		const content: string = mockCreate.mock.calls[0][1];
 		expect(content).not.toContain('due:');
+		expect(content).not.toContain('gtask-due:');
 	});
 
-	it('includes note body when task has notes content', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('Pick up from store');
-
+	it('writes gtask-title sentinel in frontmatter', async () => {
 		const mockCreate = vi.fn().mockResolvedValue({ basename: 'Task' } as unknown as TFile);
 		const app = {
 			vault: {
@@ -208,16 +200,31 @@ describe('createNoteFromGoogleTask', () => {
 			},
 		} as unknown as App;
 
-		const task = makeGoogleTask({ notes: 'Pick up from store\n\nobsidian://...' });
+		const task = makeGoogleTask({ title: 'Buy milk' });
 		await createNoteFromGoogleTask(task, 'My Tasks', makeSettings(), app);
 
 		const content: string = mockCreate.mock.calls[0][1];
-		expect(content).toContain('Pick up from store');
+		expect(content).toContain('gtask-title: "Buy milk"');
+	});
+
+	it('does not include note body from Google notes field', async () => {
+		const mockCreate = vi.fn().mockResolvedValue({ basename: 'Task' } as unknown as TFile);
+		const app = {
+			vault: {
+				getAbstractFileByPath: vi.fn(() => null),
+				createFolder: vi.fn().mockResolvedValue(undefined),
+				create: mockCreate,
+			},
+		} as unknown as App;
+
+		const task = makeGoogleTask({ notes: 'Some notes content\n\nobsidian://...' });
+		await createNoteFromGoogleTask(task, 'My Tasks', makeSettings(), app);
+
+		const content: string = mockCreate.mock.calls[0][1];
+		expect(content).not.toContain('Some notes content');
 	});
 
 	it('creates folder if it does not exist', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
-
 		const mockCreateFolder = vi.fn().mockResolvedValue(undefined);
 		const app = {
 			vault: {
@@ -232,8 +239,6 @@ describe('createNoteFromGoogleTask', () => {
 	});
 
 	it('does not create folder if it already exists', async () => {
-		vi.mocked(fieldMapper.extractBodyFromGoogleNotes).mockReturnValue('');
-
 		const mockCreateFolder = vi.fn();
 		const app = {
 			vault: {
